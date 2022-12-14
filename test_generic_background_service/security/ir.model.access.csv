@@ -1,0 +1,2 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_test_bg_service_compute_power_all,test_bg_service_compute_power all,model_test_bg_service_compute_power,,1,1,1,1
