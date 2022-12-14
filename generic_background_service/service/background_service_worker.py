@@ -38,7 +38,8 @@ class AbstractBackgroundServiceWorker(threading.Thread):
     #       to be able to handle events received from postgres.
     #       For example, we can use following thread structure:
     #           - Service Thread - Manages threads per database
-    #               - Service Database Overseer - Manages worker threads, schedule tasks for threads
+    #               - Service Database Overseer - Manages worker threads,
+    #                                             schedule tasks for threads
     #                   - Service Database Worker 1
     #                   - Service Database Worker 2
     #                   - Service Database Worker 3
