@@ -3,13 +3,13 @@
     <record id="view_test_bg_service_compute_power_tree" model="ir.ui.view">
         <field name="model">test.bg.service.compute.power</field>
         <field name="arch" type="xml">
-            <tree>
+            <list>
                 <field name="date_created"/>
                 <field name="date_completed"/>
                 <field name="base"/>
                 <field name="power"/>
                 <field name="result"/>
-            </tree>
+            </list>
         </field>
     </record>
 
