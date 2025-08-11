@@ -70,12 +70,11 @@ class AbstractBackgroundServiceWorker(threading.Thread):
 
     @contextmanager
     def with_env(self):
-        with odoo.api.Environment.manage():
-            with self.worker_registry.cursor() as cr:
-                env = odoo.api.Environment(cr, odoo.SUPERUSER_ID, {})
+        with self.worker_registry.cursor() as cr:
+            env = odoo.api.Environment(cr, odoo.SUPERUSER_ID, {})
 
-                # TODO: Possibly wrap in some error-handling code
-                yield env
+            # TODO: Possibly wrap in some error-handling code
+            yield env
 
     @property
     def worker_name(self) -> str:
@@ -97,12 +96,22 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         """ Check if stop singal received for this worker"""
         return self._worker_event_stop.is_set()
 
+    def on_init(self):
+        """ This method will be called on worker initialization.
+            It is safe to access database here to pull worker configuration if needed.
+        """
+
     def on_error(self, exc: Exception):
         """ This method will be automatically called on error captured during
             execution of 'run_service' method.
             Could be overridden by subclasses
 
             :param Exception exc: contains exception catched
+        """
+
+    def on_shutdown(self):
+        """ This method will be called on shutdow,
+            after run_service method is completed and restart is not planned.
         """
 
     def run_service(self):
@@ -144,6 +153,10 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         _logger.info(
             "Starting service worker %s for '%s' db",
             self.worker_name, self._worker_dbname)
+
+        # Run on_init hook for this worker
+        self.on_init()
+
         while not self._worker_event_stop.is_set():
 
             try:
@@ -160,6 +173,9 @@ class AbstractBackgroundServiceWorker(threading.Thread):
 
             # Sleep until wakeup event recaived
             self.sleep()
+
+        # Run .on_shutdown hook
+        self.on_shutdown()
 
         _logger.info(
             "Stopped service worker %s for '%s' db\n",
