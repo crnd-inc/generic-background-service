@@ -83,9 +83,12 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
         """ Get list of databases for this odoo server.
         """
         if odoo.tools.config['db_name']:
-            db_names = odoo.tools.config['db_name'].split(',')
-        else:
+            return odoo.tools.config['db_name'].split(',')
+        try:
             db_names = odoo.service.db.list_dbs(True)
+        except psycopg2.OperationalError:
+            _logger.warning("Cannot obtain list of databases to probe. Possibly postgres is down. Stopping workers.")
+            return []
         return db_names
 
     def _check_is_db_active_cr(self, cr, dbname: str) -> DatabaseProbe:
@@ -229,6 +232,9 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
             _logger.info(
                 "Shutting down service %s due to KeyboardInterrupt...",
                 self.name)
+        except Exception:
+            _logger.error("Unrecoverable error. Shutting down background service %s", self.name, exc_info=True)
+            raise
         finally:
             _logger.info("Shutting down workers for service %s...", self.name)
             self.shutdown_workers()
@@ -239,4 +245,3 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
         """
         _logger.info("Sending 'stop' signal to service %s...", self.name)
         self._service_event_stop.set()
-        self._service_event_wakeup.set()

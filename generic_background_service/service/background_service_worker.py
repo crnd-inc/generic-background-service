@@ -98,7 +98,8 @@ class AbstractBackgroundServiceWorker(threading.Thread):
 
     def on_init(self):
         """ This method will be called on worker initialization.
-            It is safe to access database here to pull worker configuration if needed.
+            It is safe to access database here to pull worker configuration
+            if needed.
         """
 
     def on_error(self, exc: Exception):
