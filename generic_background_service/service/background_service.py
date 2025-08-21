@@ -216,6 +216,9 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
     def _run(self):
         while not self._service_event_stop.is_set():
             self.sleep()
+            if self._service_event_stop.is_set():
+                # Stop event received, so stop the service fast
+                break
             self.stop_workers()
             self.clean_workers()
             self.spawn_workers()
