@@ -245,3 +245,4 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
         """
         _logger.info("Sending 'stop' signal to service %s...", self.name)
         self._service_event_stop.set()
+        self._service_event_wakeup.set()
