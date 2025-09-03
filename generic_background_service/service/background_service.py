@@ -42,6 +42,9 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
     # will not be registered
     _name = None
 
+    # Name of module, that should be installed in db to make the service work.
+    _require_module = None
+
     # TODO: signal to stop workers before module install/update/uninstall
     def __init__(self):
         # Dict with workers assigned for each database
@@ -92,8 +95,6 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
         return db_names
 
     def _check_is_db_active_cr(self, cr, dbname: str) -> DatabaseProbe:
-        # TODO: possibly it have sense to check if specific module is installed
-        #       to decide if database is active for this service.
         cr.execute("""
             SELECT EXISTS(
                 SELECT 1
@@ -101,9 +102,26 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
                 WHERE state LIKE 'to %'
             );
         """)
-        if cr.fetchone()[0] == 't':
+        if cr.fetchone()[0] is True:
             return DatabaseProbe(
                 dbname, False, 'module install/update in progress')
+
+        # Check if required module is installed
+        if self._require_module:
+            cr.execute("""
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM ir_module_module
+                    WHERE state = 'installed'
+                      AND name = %(module_name)s
+                );
+            """, {
+                'module_name': self._require_module,
+            })
+            if cr.fetchone()[0] is not True:
+                return DatabaseProbe(
+                    dbname, False, 'required module %s not installed' % self._require_module)
+
         return DatabaseProbe(dbname, True, 'ok')
 
     def _check_is_db_active(self, dbname: str) -> DatabaseProbe:
@@ -176,6 +194,12 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
                 continue
             if not dbprobe.state:
                 # Stop worker if database is not active
+                #
+                # Note, that here we just send signal to worker to stop it,
+                # and expect, that it will shutdown itself.
+                #
+                # TODO: may be we have to add some additional check if worker
+                # was shutdown, and enforce killing it.
                 self.stop_worker(dbprobe.dbname)
                 _logger.warning(
                     "Stopping worker for service %s for db %s because %s",
