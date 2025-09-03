@@ -90,7 +90,9 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
         try:
             db_names = odoo.service.db.list_dbs(True)
         except psycopg2.OperationalError:
-            _logger.warning("Cannot obtain list of databases to probe. Possibly postgres is down. Stopping workers.")
+            _logger.warning(
+                "Cannot obtain list of databases to probe. "
+                "Possibly postgres is down. Stopping workers.")
             return []
         return db_names
 
@@ -120,7 +122,9 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
             })
             if cr.fetchone()[0] is not True:
                 return DatabaseProbe(
-                    dbname, False, 'required module %s not installed' % self._require_module)
+                    dbname,
+                    False,
+                    'required module %s not installed' % self._require_module)
 
         return DatabaseProbe(dbname, True, 'ok')
 
@@ -260,7 +264,9 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
                 "Shutting down service %s due to KeyboardInterrupt...",
                 self.name)
         except Exception:
-            _logger.error("Unrecoverable error. Shutting down background service %s", self.name, exc_info=True)
+            _logger.error(
+                "Unrecoverable error. Shutting down background service %s",
+                self.name, exc_info=True)
             raise
         finally:
             _logger.info("Shutting down workers for service %s...", self.name)
