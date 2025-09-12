@@ -189,15 +189,19 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
             return
         if worker.is_alive() and not worker.worker_is_stopped():
             worker.worker_stop()
+            worker.wakeup()  # Wakeup worker if it was sleeping
 
     def stop_workers(self):
         """ Stop workers for inactive databases"""
-        for dbprobe in self._probe_databases():
-            if dbprobe.dbname not in self._workers:
-                # Ignore databases that has no workers started
-                continue
-            if not dbprobe.state:
-                # Stop worker if database is not active
+        db_probes = {
+            dbprobe.dbname: dbprobe
+            for dbprobe in self._probe_databases()
+        }
+        for dbname in self._workers:
+            dbprobe = db_probes.get(dbname)
+            if not dbprobe or not dbprobe.state:
+                # Stop worker if database is not active or
+                # if database not in list of available databases
                 #
                 # Note, that here we just send signal to worker to stop it,
                 # and expect, that it will shutdown itself.
