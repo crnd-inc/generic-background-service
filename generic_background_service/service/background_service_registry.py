@@ -39,7 +39,7 @@ class BackgroundServiceRegistry:
             _logger.warning(
                 "Registration of services is not allowed at the moment."
                 "May be you have to add module that defines service '%s' to"
-                "system_wide_modules config param.")
+                "system_wide_modules config param.", name)
             return
         cls._registered_services[name].append(service_cls)
 
