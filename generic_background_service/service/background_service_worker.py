@@ -129,6 +129,7 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         """ Could be overridden in subclasses.
 
             :return float: time to sleep in seconds.
+                If zero - no sleep between service runs (default behavior)
         """
         return 0.0
 

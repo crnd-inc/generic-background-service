@@ -208,10 +208,13 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
                 #
                 # TODO: may be we have to add some additional check if worker
                 # was shutdown, and enforce killing it.
-                self.stop_worker(dbprobe.dbname)
+                self.stop_worker(dbname)
                 _logger.warning(
                     "Stopping worker for service %s for db %s because %s",
-                    self.name, dbprobe.dbname, dbprobe.message)
+                    self.name,
+                    dbname,
+                    dbprobe.message if dbprobe else "inactive database"
+                )
 
     def clean_workers(self):
         """ Clean dead workers from worker registry
