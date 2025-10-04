@@ -133,12 +133,14 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         """
         return 0.0
 
-    def sleep(self):
+    def sleep(self, timeout=None):
         """ Sleep until wakeup event received
         """
         if self.get_sleep_timeout() > 0:
             # Wait poll interval timeout or shutdown event
-            self._worker_event_wakeup.wait(self.get_sleep_timeout())
+            self._worker_event_wakeup.wait(
+                self.get_sleep_timeout() if timeout is None else timeout
+            )
             # Clear wakeup event, to allow worker to sleep again on next
             # call to this method
             self._worker_event_wakeup.clear()
