@@ -1,7 +1,7 @@
-image: ghcr.io/katyukha/odood/odoo/18.0:latest
+image: ghcr.io/katyukha/odood/odoo/19.0:latest
 
 variables:
-    SERIES_BRANCH: '18.0'
+    SERIES_BRANCH: '19.0'
     ODOO_ADMIN_PASS: admin
     CI_JOB_TOKEN_GIT_HOST: 'gitlab.crnd.pro'
 
@@ -9,11 +9,11 @@ variables:
 
 .only-stable-branch: &only_stable_branch
     only:
-        - "18.0"
+        - "19.0"
 
 .only-dev-branch: &only_dev_branch
     only:
-        - /^18.0-.*$/
+        - /^19.0-.*$/
 
 .except-auto-commits: &except_auto_commits
     except:
@@ -64,7 +64,7 @@ build_env:
         - whoami
         - odood info
         - odood status
-        - echo "Checking branch compatability $CI_COMMIT_BRANCH" && [[ "$CI_COMMIT_BRANCH" =~ ^18.0(-.*)?$ ]]
+        - echo "Checking branch compatability $CI_COMMIT_BRANCH" && [[ "$CI_COMMIT_BRANCH" =~ ^19.0(-.*)?$ ]]
 
 lint:
   extends: .setup
@@ -103,9 +103,8 @@ migration-tests:
   allow_failure: true
   <<: *only_dev_branch
 
-
 update_addons_list_and_trans:
-    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:18.0-ci
+    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
     stage: deploy
     before_script:
         - odoo-helper link .
