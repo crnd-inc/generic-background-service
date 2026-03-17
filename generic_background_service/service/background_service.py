@@ -225,7 +225,12 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
                 )
 
     def clean_workers(self):
-        """ Clean dead workers from worker registry
+        """ Clean dead workers from worker registry.
+
+            Dead workers are removed here but not immediately respawned.
+            Respawning happens on the next beat cycle via spawn_workers().
+            This deliberate delay avoids a continuous respawn/die loop
+            if the failure cause is transient (e.g. temporary DB outage).
         """
         stopped_dbs = []
         for dbname, worker in self._workers.items():
