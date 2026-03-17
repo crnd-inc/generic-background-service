@@ -93,7 +93,7 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         self._worker_event_wakeup.set()
 
     def worker_is_stopped(self):
-        """ Check if stop singal received for this worker"""
+        """ Check if stop signal received for this worker"""
         return self._worker_event_stop.is_set()
 
     def on_init(self):
@@ -111,7 +111,7 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         """
 
     def on_shutdown(self):
-        """ This method will be called on shutdow,
+        """ This method will be called on shutdown,
             after run_service method is completed and restart is not planned.
         """
 
@@ -184,7 +184,7 @@ class AbstractBackgroundServiceWorker(threading.Thread):
                 # method restarted (after sleep)
                 self.on_error(exc)
 
-            # Sleep until wakeup event recaived
+            # Sleep until wakeup event received
             self.sleep()
 
         # Run .on_shutdown hook

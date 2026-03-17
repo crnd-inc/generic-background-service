@@ -53,12 +53,10 @@ class BackgroundServiceRegistry:
             For example, if we define service with two definitions:
 
                 class MyServiceDefinition(BackgroundService):
-                    class Meta:
-                        name = 'my.service'
+                    _name = 'my.service'
 
                 class MyServiceExtension(BackgroundService):
-                    class Meta:
-                        name = 'my.service'
+                    _name = 'my.service'
 
             This method will create new class for this service:
 
