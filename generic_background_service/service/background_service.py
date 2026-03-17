@@ -20,6 +20,10 @@ DatabaseProbe = collections.namedtuple(
 # Default beat timeout (in seconds). Could be float or int
 DEFAULT_BEAT_TIMEOUT = 3
 
+# Default shutdown timeout (in seconds).
+# Time to wait for each worker to finish during shutdown.
+DEFAULT_SHUTDOWN_TIMEOUT = 30
+
 
 # TODO: possibly use __init_subclass__ instead of separate metaclass
 class BackgroundServiceMeta(abc.ABCMeta):
@@ -44,6 +48,10 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
 
     # Name of module, that should be installed in db to make the service work.
     _require_module = None
+
+    # Shutdown timeout (in seconds). Time to wait for each worker to finish
+    # during shutdown. Subclasses can override for longer-running services.
+    _shutdown_timeout = DEFAULT_SHUTDOWN_TIMEOUT
 
     # TODO: signal to stop workers before module install/update/uninstall
     def __init__(self):
@@ -235,7 +243,11 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
             self.stop_worker(dbname)
             wait_workers += [worker]
         for worker in wait_workers:
-            worker.join()
+            worker.join(self._shutdown_timeout)
+            if worker.is_alive():
+                _logger.warning(
+                    "Worker %s did not stop within %s seconds",
+                    worker.name, self._shutdown_timeout)
 
     def sleep(self):
         """ Make master thread sleep for beat timeout or

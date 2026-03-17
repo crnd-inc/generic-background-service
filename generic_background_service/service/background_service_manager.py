@@ -133,6 +133,11 @@ class BackgroundServiceManagerThreadedMode(AbstractBackgroundServiceManager):
             service = self._threaded_worker_registry[service_name]
             service.stop()
 
+    # Timeout (in seconds) for waiting on each service container thread
+    # during shutdown. This should be long enough for the service to
+    # complete its own internal worker shutdown cycle.
+    _service_shutdown_timeout = 60
+
     def threaded_wait_services(self):
         """ Wait while all running services will be stopped.
             (Used Thread.join method to wait for services)
@@ -140,5 +145,9 @@ class BackgroundServiceManagerThreadedMode(AbstractBackgroundServiceManager):
         _logger.info("Waiting for background services to stop")
         for service_name in self.services:
             service = self._threaded_worker_registry[service_name]
-            service.join()
+            service.join(self._service_shutdown_timeout)
+            if service.is_alive():
+                _logger.warning(
+                    "Service %s did not stop within %s seconds",
+                    service_name, self._service_shutdown_timeout)
         _logger.info("All background services stopped.")
