@@ -22,8 +22,9 @@ def wrap_service_as_thread(service_cls):
         """
 
         def __init__(self):
-            super().__init__(name='EventProcessorMaster')
             self.service = service_cls()
+            super().__init__(
+                name='BGService-%s' % self.service.name)
 
         def run(self):
             self.service.run()

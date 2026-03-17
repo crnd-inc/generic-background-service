@@ -158,8 +158,17 @@ class AbstractBackgroundServiceWorker(threading.Thread):
             "Starting service worker %s for '%s' db",
             self.worker_name, self._worker_dbname)
 
-        # Run on_init hook for this worker
-        self.on_init()
+        try:
+            # Run on_init hook for this worker
+            self.on_init()
+        except Exception as exc:
+            _logger.error(
+                "Error caught during on_init of service worker "
+                "%s for db %s",
+                self.worker_name, self._worker_dbname, exc_info=True)
+            self.on_error(exc)
+            self.on_shutdown()
+            return
 
         while not self._worker_event_stop.is_set():
 

@@ -242,6 +242,7 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
             or wakeup event
         """
         self._service_event_wakeup.wait(self._beat_timeout)
+        self._service_event_wakeup.clear()
 
     def wakeup(self):
         """ Wakeup services's master thread
