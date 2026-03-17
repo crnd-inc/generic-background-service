@@ -25,19 +25,7 @@ DEFAULT_BEAT_TIMEOUT = 3
 DEFAULT_SHUTDOWN_TIMEOUT = 30
 
 
-# TODO: possibly use __init_subclass__ instead of separate metaclass
-class BackgroundServiceMeta(abc.ABCMeta):
-    """ Metaclass for services, that user to automatically register
-        all subclasses of BackgroundService in service registry
-    """
-
-    def __init__(cls, name, bases, attrs):
-        super().__init__(name, bases, attrs)
-        if cls._name is not None:
-            BackgroundServiceRegistry.register_service(cls._name, cls)
-
-
-class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
+class BackgroundService(abc.ABC):
     """ Background service will spawn 1 background worker of specified class
         for each active database.
     """
@@ -45,6 +33,11 @@ class BackgroundService(abc.ABC, metaclass=BackgroundServiceMeta):
     # Name to be used to register service. If not set, then service
     # will not be registered
     _name = None
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if cls._name is not None:
+            BackgroundServiceRegistry.register_service(cls._name, cls)
 
     # Name of module, that should be installed in db to make the service work.
     _require_module = None
