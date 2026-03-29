@@ -3,9 +3,6 @@ from odoo import models, fields
 
 class TestBGServiceComputePower(models.Model):
     _name = 'test.bg.service.compute.power'
-    _inherit = [
-        'generic.mixin.refresh.view',
-    ]
     _description = 'Test BG Service: Compute Power'
 
     date_created = fields.Datetime(

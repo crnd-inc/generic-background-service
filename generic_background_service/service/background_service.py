@@ -165,6 +165,11 @@ class BackgroundService(abc.ABC):
         """
         params = self.get_worker_params()
         worker_cls = self.get_worker_class()
+        if not (isinstance(worker_cls, type)
+                and issubclass(worker_cls, AbstractBackgroundServiceWorker)):
+            raise TypeError(
+                "get_worker_class() must return a subclass of "
+                "AbstractBackgroundServiceWorker, got %s" % worker_cls)
         worker = worker_cls(self._name, dbname, params)
         self._workers[dbname] = worker
         worker.start()
