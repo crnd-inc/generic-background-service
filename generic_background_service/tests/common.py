@@ -32,7 +32,12 @@ class CycleCountWorker(AbstractBackgroundServiceWorker):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._cycle_count = 0
-        self._inner = self._inner_cls(*args, **kwargs)
+        inner_cls = self._inner_cls
+        if inner_cls is None:
+            raise TypeError(
+                "CycleCountWorker must be subclassed with _inner_cls set")
+        # pylint: disable=not-callable
+        self._inner = inner_cls(*args, **kwargs)
         # Forward registry and env access so inner worker can use DB
         self._inner._worker_registry = self._worker_registry
         self._inner.with_env = self.with_env

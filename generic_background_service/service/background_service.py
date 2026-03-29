@@ -35,9 +35,10 @@ class BackgroundService(abc.ABC):
     _name = None
 
     def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
+        result = super().__init_subclass__(**kwargs)
         if cls._name is not None:
             BackgroundServiceRegistry.register_service(cls._name, cls)
+        return result
 
     # Name of module, that should be installed in db to make the service work.
     _require_module = None

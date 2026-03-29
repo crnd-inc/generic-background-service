@@ -368,6 +368,7 @@ class TestServiceWorkerManagement(BackgroundServiceTestCase):
         and remaining databases never get workers.
         """
 
+        # pylint: disable=missing-return
         class BadConstructorWorker(AbstractBackgroundServiceWorker):
             """Worker whose constructor fails for a specific DB."""
             def __init__(self, service_name, dbname, params):
