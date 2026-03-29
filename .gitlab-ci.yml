@@ -1,4 +1,4 @@
-image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:18.0-simple
+image: ghcr.io/katyukha/odood/odoo/18.0:latest
 
 variables:
     SERIES_BRANCH: '18.0'
@@ -30,110 +30,79 @@ cache: {}
         paths:
             - "${PIP_CACHE_DIR}"
 
+# Shared setup: link addons and fetch dependencies.
+# Requires odoo_requirements.txt at repo root; remove the second line if not needed.
+.setup:
+  before_script:
+    - git config --global --add safe.directory "$(pwd)"
+    - odood --config-from-env addons link .
+    - odood --config-from-env addons add --single-branch --odoo-requirements ./odoo_requirements.txt
+
+# Shared PostgreSQL sidecar and matching ODOOD_OPT_* variables.
+.with-postgres:
+  services:
+    - name: postgres:16
+      alias: postgres
+  variables:
+    POSTGRES_USER: odoo
+    POSTGRES_PASSWORD: odoo
+    POSTGRES_DB: postgres
+    ODOOD_OPT_DB_HOST: postgres
+    ODOOD_OPT_DB_USER: odoo
+    ODOOD_OPT_DB_PASSWORD: odoo
+
+
 stages:
-    - static-test
+    - lint
     - test
     - deploy
 
 build_env:
-    stage: static-test
+    stage: lint
     script:
         - pwd
         - whoami
-        - odoo-helper --version
-        - odoo-helper status --tools-versions --ci-tools-versions
+        - odood info
+        - odood status
         - echo "Checking branch compatability $CI_COMMIT_BRANCH" && [[ "$CI_COMMIT_BRANCH" =~ ^18.0(-.*)?$ ]]
 
-flake8:
-    stage: static-test
-    script:
-        - odoo-helper lint flake8 .
-    <<: *except_auto_commits
-
-pylint:
-    stage: static-test
-    script:
-        - odoo-helper lint pylint .
-    <<: *except_auto_commits
-
-stylelint:
-    stage: static-test
-    script:
-        - odoo-helper lint style .
-    allow_failure: true
-    <<: *except_auto_commits
-
-bandit:
-    stage: static-test
-    <<: *pip_cache_definition
-    before_script:
-        - odoo-helper pip install bandit
-    script:
-        - odoo-helper exec bandit -r .
-    <<: *except_auto_commits
+lint:
+  extends: .setup
+  stage: lint
+  <<: *pip_cache_definition
+  script:
+    - odood --config-from-env pre-commit set-up
+    - odood --config-from-env pre-commit run
+  <<: *except_auto_commits
 
 check-versions:
-    stage: static-test
-    script:
-        - odoo-helper ci check-versions-git . origin/$SERIES_BRANCH $CI_COMMIT_SHA
-    <<: *only_dev_branch
-    <<: *except_auto_commits
-
-ensure-changelog:
-    stage: static-test
-    script:
-        - odoo-helper ci ensure-changelog --format md . origin/$SERIES_BRANCH $CI_COMMIT_SHA
-    allow_failure: true
-    <<: *only_dev_branch
-    <<: *except_auto_commits
-
-ensure-icons:
-    stage: static-test
-    script:
-        - odoo-helper ci ensure-icons .
-    allow_failure: true
-    <<: *only_dev_branch
-    <<: *except_auto_commits
-
+  extends: .setup
+  stage: lint
+  script:
+    - odood --config-from-env repo check-versions --ignore-translations
+  <<: *only_dev_branch
+  <<: *except_auto_commits
 
 tests:
-    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:18.0-ci
-    stage: test
-    <<: *pip_cache_definition
-    before_script:
-        - odoo-helper link .
-        - apt update -q
-        - apt install -qy poppler-utils
-    script:
-        - odoo-helper --use-unbuffer test --coverage --coverage-report --coverage-skip-covered --coverage-fail-under 30 --create-test-db --dir .
-    <<: *except_auto_commits
-    coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+\%)/'
+  extends:
+    - .setup
+    - .with-postgres
+  stage: test
+  script:
+    - odood --config-from-env test -t --dir .
 
-migration_tests:
-    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:18.0-ci
-    stage: test
-    variables:
-        ODOO_DB_NAME: test-db
-    <<: *pip_cache_definition
-    before_script:
-        - apt update -q
-        - apt install -qy poppler-utils
-        - git checkout $SERIES_BRANCH
-        - git pull
-        - odoo-helper link .
-        - odoo-helper --use-unbuffer db create --demo $ODOO_DB_NAME
-        - odoo-helper --use-unbuffer addons install --db $ODOO_DB_NAME --dir .
-        - git checkout $CI_COMMIT_SHA
-        - git clean -fdx
-        - odoo-helper link .
-        - odoo-helper --use-unbuffer addons update-list
-        - odoo-helper --use-unbuffer addons update --db $ODOO_DB_NAME --dir .
-    script:
-        - odoo-helper --use-unbuffer test --coverage --coverage-report --coverage-skip-covered --coverage-fail-under 30 --dir .
-    coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+\%)/'
-    <<: *only_dev_branch
-    <<: *except_auto_commits
-    allow_failure: true
+migration-tests:
+  extends:
+    - .setup
+    - .with-postgres
+  stage: test
+  script:
+    # Migration tests may fail if dependencies introduce incompatible changes
+    # with an older version of this repo — treated as a soft failure.
+    - odood --config-from-env test -t --migration --dir .
+  allow_failure: true
+  <<: *only_dev_branch
+
 
 update_addons_list_and_trans:
     image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:18.0-ci
@@ -148,48 +117,3 @@ update_addons_list_and_trans:
     <<: *only_stable_branch
     <<: *except_auto_commits
     allow_failure: true
-
-.deploy_review_definition: &deploy_review_definition
-    stage: deploy
-    before_script:
-        - ci-review-app init
-    script:
-        - ci-review-app start
-    tags:
-        - deploy
-        - odoo-review-ci4-shared
-        - review-apps
-
-
-deploy_review_dev:
-    <<: *deploy_review_definition
-    environment:
-        name: review/$CI_COMMIT_REF_NAME
-        url: http://$CI_ENVIRONMENT_SLUG-$CI_PROJECT_ID.ci4.crnd.pro
-        on_stop: stop_review_dev
-        auto_stop_in: 1 week
-    <<: *only_dev_branch
-    when: manual
-
-deploy_review_stable:
-    <<: *deploy_review_definition
-    environment:
-        name: stable/$CI_COMMIT_REF_NAME
-        url: http://$CI_ENVIRONMENT_SLUG-$CI_PROJECT_ID.ci4.crnd.pro
-    <<: *only_stable_branch
-
-stop_review_dev:
-    stage: deploy
-    environment:
-        name: review/$CI_COMMIT_REF_NAME
-        action: stop
-    variables:
-        GIT_STRATEGY: none
-    script:
-        - ci-review-app stop
-    when: manual
-    tags:
-        - deploy
-        - odoo-review-ci4-shared
-        - review-apps
-    <<: *only_dev_branch
