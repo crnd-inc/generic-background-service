@@ -6,10 +6,5 @@
     "license": "LGPL-3",
     "summary": """True background services for Odoo""",
     'category': 'Technical Settings',
-    'depends': [],
-    'demo': [],
-    'data': [],
     'images': ['static/description/banner.png'],
-    'installable': True,
-    'auto_install': False,
 }

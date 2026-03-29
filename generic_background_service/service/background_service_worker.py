@@ -1,6 +1,7 @@
-from contextlib import contextmanager
 import logging
 import threading
+
+from contextlib import contextmanager
 
 import odoo
 

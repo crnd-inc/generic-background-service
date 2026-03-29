@@ -16,10 +16,6 @@
         'security/ir.model.access.csv',
         'views/test_bg_service_compute_power.xml',
     ],
-    'demo': [
-    ],
     'images': ['static/description/banner.png'],
-    'installable': True,
-    'application': False,
     'license': 'LGPL-3',
 }
