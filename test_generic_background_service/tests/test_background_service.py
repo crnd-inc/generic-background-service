@@ -298,6 +298,35 @@ class TestServiceWorkerManagement(BackgroundServiceTestCase):
 
         service.shutdown_workers()
 
+    def test_stop_worker_nonexistent_db_is_noop(self):
+        """stop_worker() for a database with no worker should be a
+        safe no-op."""
+        service = self.create_service(
+            worker_cls=DummyWorker,
+            db_list=['db1'],
+        )
+        # No workers spawned — should not raise
+        service.stop_worker('nonexistent')
+
+    def test_stop_worker_already_stopped_is_safe(self):
+        """Calling stop_worker() on an already-stopped worker
+        should be idempotent."""
+        service = self.create_service(
+            worker_cls=DummyWorker,
+            db_list=['db1'],
+        )
+        service.spawn_workers()
+        worker = service._workers['db1']
+
+        # Stop once
+        service.stop_worker('db1')
+        self.assertTrue(worker.worker_is_stopped())
+
+        # Stop again — should not raise
+        service.stop_worker('db1')
+
+        service.shutdown_workers()
+
     def test_clean_workers_removes_dead_workers(self):
         service = self.create_service(
             worker_cls=DummyWorker,
@@ -326,6 +355,53 @@ class TestServiceWorkerManagement(BackgroundServiceTestCase):
         # Worker is still alive
         service.clean_workers()
         self.assertIn('db1', service._workers)
+
+        service.shutdown_workers()
+
+    def test_spawn_workers_one_bad_db_does_not_block_others(self):
+        """If spawn_worker() fails for one database, workers for
+        other active databases should still be spawned.
+
+        Bug: spawn_workers() iterates _probe_databases() and calls
+        spawn_worker() without try/except. If one spawn_worker()
+        raises (e.g. broken worker constructor), the loop aborts
+        and remaining databases never get workers.
+        """
+
+        class BadConstructorWorker(AbstractBackgroundServiceWorker):
+            """Worker whose constructor fails for a specific DB."""
+            def __init__(self, service_name, dbname, params):
+                if dbname == 'bad_db':
+                    raise RuntimeError("constructor fails for bad_db")
+                super().__init__(service_name, dbname, params)
+
+            def run_service(self):
+                pass
+
+            def get_sleep_timeout(self):
+                return 1.0
+
+        service = self.create_service(
+            worker_cls=BadConstructorWorker,
+            db_list=['bad_db', 'good_db'],
+            active_dbs=['bad_db', 'good_db'],
+        )
+
+        logger_name = (
+            'odoo.addons.generic_background_service'
+            '.service.background_service'
+        )
+        svc_logger = logging.getLogger(logger_name)
+        prev_level = svc_logger.level
+        svc_logger.setLevel(logging.CRITICAL)
+        try:
+            service.spawn_workers()
+        finally:
+            svc_logger.setLevel(prev_level)
+
+        # good_db should still have a worker despite bad_db failure
+        self.assertIn('good_db', service._workers)
+        self.assertTrue(service._workers['good_db'].is_alive())
 
         service.shutdown_workers()
 
@@ -626,3 +702,44 @@ class TestWorkerRespawnAfterCrash(BackgroundServiceTestCase):
         self.assertGreaterEqual(
             EphemeralWorker.spawned_count, 2,
             "Worker should have been respawned after dying")
+
+
+# ---------------------------------------------------------------
+# Tests: registry late registration
+# ---------------------------------------------------------------
+
+class TestRegistryLateRegistration(TransactionCase):
+    """Test that BackgroundServiceRegistry rejects service
+    registration after initialization."""
+
+    def test_late_registration_is_ignored(self):
+        """Services defined after the registry is initialized
+        should be silently ignored (with a warning log)."""
+        from odoo.addons.generic_background_service.service.\
+            background_service_registry import BackgroundServiceRegistry
+
+        # Force initialization (normally done by BackgroundServiceManager)
+        orig_allowed = BackgroundServiceRegistry._registration_allowed
+        orig_instance = BackgroundServiceRegistry._registry_instance
+        try:
+            BackgroundServiceRegistry._registration_allowed = False
+
+            logger_name = (
+                'odoo.addons.generic_background_service'
+                '.service.background_service_registry'
+            )
+            with self.assertLogs(logger_name, level='WARNING'):
+                BackgroundServiceRegistry.register_service(
+                    'late.test.service', type('LateService', (), {}))
+
+            # The late service should NOT be in initialized services
+            self.assertNotIn(
+                'late.test.service',
+                BackgroundServiceRegistry.get_initialized_services())
+        finally:
+            # Restore original state
+            BackgroundServiceRegistry._registration_allowed = orig_allowed
+            BackgroundServiceRegistry._registry_instance = orig_instance
+            # Clean up any accidental registration
+            BackgroundServiceRegistry._registered_services.pop(
+                'late.test.service', None)

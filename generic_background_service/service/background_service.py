@@ -179,7 +179,12 @@ class BackgroundService(abc.ABC):
         """
         for dbprobe in self._probe_databases():
             if dbprobe.state and dbprobe.dbname not in self._workers:
-                self.spawn_worker(dbprobe.dbname)
+                try:
+                    self.spawn_worker(dbprobe.dbname)
+                except Exception:
+                    _logger.error(
+                        "Failed to spawn worker for service %s for db %s",
+                        self.name, dbprobe.dbname, exc_info=True)
             elif not dbprobe.state and dbprobe.dbname not in self._workers:
                 _logger.warning(
                     "Database %s skipped for service %s because %s",

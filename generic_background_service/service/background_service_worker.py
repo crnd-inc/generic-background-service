@@ -150,26 +150,10 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         """
         self._worker_event_wakeup.set()
 
-    def run(self):
+    def _run(self):
         """ Main worker loop.
-            Do jobs unless stop signal requested
+            Do jobs unless stop signal requested.
         """
-        _logger.info(
-            "Starting service worker %s for '%s' db",
-            self.worker_name, self._worker_dbname)
-
-        try:
-            # Run on_init hook for this worker
-            self.on_init()
-        except Exception as exc:
-            _logger.error(
-                "Error caught during on_init of service worker "
-                "%s for db %s",
-                self.worker_name, self._worker_dbname, exc_info=True)
-            self.on_error(exc)
-            self.on_shutdown()
-            return
-
         while not self._worker_event_stop.is_set():
 
             try:
@@ -181,15 +165,42 @@ class AbstractBackgroundServiceWorker(threading.Thread):
 
                 # Run error handler that could be overridden by subclass.
                 # By default error is not propagated, just the run_service
-                # method restarted (after sleep)
+                # method restarted (after sleep).
+                # If on_error() raises, it is treated as unrecoverable:
+                # the worker exits and on_shutdown() is still called
+                # (guaranteed by the try/finally in run()).
                 self.on_error(exc)
 
             # Sleep until wakeup event received
             self.sleep()
 
-        # Run .on_shutdown hook
-        self.on_shutdown()
+    def run(self):
+        """ Worker lifecycle: on_init → _run loop → on_shutdown.
 
+            on_shutdown() is guaranteed to run via try/finally,
+            even if on_init(), run_service(), or on_error() raises.
+        """
         _logger.info(
-            "Stopped service worker %s for '%s' db\n",
+            "Starting service worker %s for '%s' db",
             self.worker_name, self._worker_dbname)
+
+        try:
+            try:
+                self.on_init()
+            except Exception as exc:
+                _logger.error(
+                    "Error caught during on_init of service worker "
+                    "%s for db %s",
+                    self.worker_name, self._worker_dbname, exc_info=True)
+                self.on_error(exc)
+                return
+
+            self._run()
+        finally:
+            _logger.info(
+                "Shutting down service worker %s for '%s' db",
+                self.worker_name, self._worker_dbname)
+            self.on_shutdown()
+            _logger.info(
+                "Stopped service worker %s for '%s' db\n",
+                self.worker_name, self._worker_dbname)

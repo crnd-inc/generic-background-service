@@ -105,6 +105,127 @@ class TestWorkerOnInitError(TransactionCase):
             "run_service() should not be called when on_init() fails")
 
 
+class TestOnErrorException(TransactionCase):
+    """Test that an exception in on_error() does not prevent
+    on_shutdown() from being called.
+
+    Bug: on_error() is called inside the except block but without
+    its own try/except. If on_error() raises, the exception escapes
+    the while loop and on_shutdown() is never called.
+    """
+
+    def test_on_error_exception_still_calls_on_shutdown(self):
+        """If on_error() raises, on_shutdown() must still be called."""
+
+        class BrokenOnErrorWorker(AbstractBackgroundServiceWorker):
+            shutdown_called = threading.Event()
+            error_raised = False
+
+            def run_service(self):
+                if BrokenOnErrorWorker.error_raised:
+                    # Stop after the first error cycle
+                    self.worker_stop()
+                    return
+                raise RuntimeError("run_service failure")
+
+            def on_error(self, exc):
+                BrokenOnErrorWorker.error_raised = True
+                raise ValueError("on_error is broken too")
+
+            def on_shutdown(self):
+                BrokenOnErrorWorker.shutdown_called.set()
+
+            def get_sleep_timeout(self):
+                return 0.0
+
+        worker = BrokenOnErrorWorker('test.service', 'testdb', {})
+
+        worker_logger = logging.getLogger(
+            'odoo.addons.generic_background_service'
+            '.service.background_service_worker')
+        prev_level = worker_logger.level
+        worker_logger.setLevel(logging.CRITICAL)
+        try:
+            worker.start()
+            worker.join(timeout=5)
+        finally:
+            worker_logger.setLevel(prev_level)
+
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(
+            BrokenOnErrorWorker.shutdown_called.is_set(),
+            "on_shutdown() must be called even when on_error() raises")
+
+    def test_on_error_exception_after_on_init_still_calls_on_shutdown(self):
+        """If on_init() fails and then on_error() also raises,
+        on_shutdown() must still be called."""
+
+        class DoubleFaultWorker(AbstractBackgroundServiceWorker):
+            shutdown_called = threading.Event()
+
+            def on_init(self):
+                raise RuntimeError("on_init failure")
+
+            def on_error(self, exc):
+                raise ValueError("on_error is broken too")
+
+            def on_shutdown(self):
+                DoubleFaultWorker.shutdown_called.set()
+
+            def run_service(self):
+                pass
+
+            def get_sleep_timeout(self):
+                return 0.0
+
+        worker = DoubleFaultWorker('test.service', 'testdb', {})
+
+        worker_logger = logging.getLogger(
+            'odoo.addons.generic_background_service'
+            '.service.background_service_worker')
+        prev_level = worker_logger.level
+        worker_logger.setLevel(logging.CRITICAL)
+        try:
+            worker.start()
+            worker.join(timeout=5)
+        finally:
+            worker_logger.setLevel(prev_level)
+
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(
+            DoubleFaultWorker.shutdown_called.is_set(),
+            "on_shutdown() must be called even when on_error() raises "
+            "after on_init() failure")
+
+
+class TestWorkerZeroSleepTimeout(TransactionCase):
+    """Test that a worker with get_sleep_timeout() == 0 loops
+    without blocking on sleep()."""
+
+    def test_zero_timeout_does_not_block(self):
+        """Worker with zero sleep timeout should loop rapidly
+        and still respond to stop signal."""
+
+        class ZeroSleepWorker(AbstractBackgroundServiceWorker):
+            run_count = 0
+
+            def run_service(self):
+                ZeroSleepWorker.run_count += 1
+                if ZeroSleepWorker.run_count >= 10:
+                    self.worker_stop()
+
+            def get_sleep_timeout(self):
+                return 0.0
+
+        worker = ZeroSleepWorker('test.service', 'testdb', {})
+        worker.start()
+        worker.join(timeout=5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertGreaterEqual(ZeroSleepWorker.run_count, 10,
+                                "Worker should loop without sleep delay")
+
+
 class TestWorkerRunLoop(TransactionCase):
     """Test the worker's main run() loop: error recovery,
     sleep/wakeup, stop signal.
