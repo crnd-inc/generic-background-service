@@ -1,6 +1,6 @@
+import collections
 import logging
 from typing import Dict, List, Type
-import collections
 
 _logger = logging.getLogger(__name__)
 
