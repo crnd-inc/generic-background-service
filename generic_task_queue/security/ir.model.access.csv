@@ -1,0 +1,3 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_generic_task_queue_task_system,generic_task_queue_task system,model_generic_task_queue_task,base.group_system,1,1,1,1
+access_generic_task_queue_worker_system,generic_task_queue_worker system,model_generic_task_queue_worker,base.group_system,1,1,1,1

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_test_task_target_tree" model="ir.ui.view">
+        <field name="name">test.task.target.tree</field>
+        <field name="model">test.task.target</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name"/>
+                <field name="value"/>
+                <field name="processed"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_test_task_target_form" model="ir.ui.view">
+        <field name="name">test.task.target.form</field>
+        <field name="model">test.task.target</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_plan_task"
+                            string="Plan Task"
+                            type="object"
+                            class="btn-primary"/>
+                </header>
+                <sheet>
+                    <group>
+                        <field name="name"/>
+                        <field name="value"/>
+                        <field name="processed"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_test_task_target" model="ir.actions.act_window">
+        <field name="name">Test Task Targets</field>
+        <field name="res_model">test.task.target</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem id="menu_test_task_target"
+              name="Test Targets"
+              parent="generic_task_queue.menu_task_queue_root"
+              action="action_test_task_target"
+              sequence="90"/>
+
+</odoo>
