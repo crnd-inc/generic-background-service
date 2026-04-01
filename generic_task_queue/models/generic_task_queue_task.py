@@ -155,6 +155,7 @@ class GenericTaskQueueTask(models.Model):
                         new_state=new_state,
                     ))
 
+    @api.private
     def action_assign(self, worker):
         """ Transition: pending → assigned.
 
@@ -166,6 +167,7 @@ class GenericTaskQueueTask(models.Model):
             'worker_id': worker.id,
         })
 
+    @api.private
     def action_start(self):
         """ Transition: assigned → running.
 
@@ -178,6 +180,7 @@ class GenericTaskQueueTask(models.Model):
             'progress': 0,
         })
 
+    @api.private
     def action_done(self, result=None):
         """ Transition: running → done.
 
@@ -191,6 +194,7 @@ class GenericTaskQueueTask(models.Model):
             'progress': 100,
         })
 
+    @api.private
     def action_fail(self, error=None):
         """ Transition: running → failed.
 
@@ -251,6 +255,7 @@ class GenericTaskQueueTask(models.Model):
         if children_to_cancel:
             children_to_cancel.action_cancel()
 
+    @api.private
     def update_progress(self, value):
         """ Update progress using direct SQL on a separate cursor.
 
@@ -271,6 +276,7 @@ class GenericTaskQueueTask(models.Model):
         finally:
             new_cr.close()
 
+    @api.private
     def is_cancelled(self):
         """ Check if cancellation has been requested.
 
@@ -292,6 +298,7 @@ class GenericTaskQueueTask(models.Model):
         finally:
             new_cr.close()
 
+    @api.private
     @api.model
     def claim_task(self, worker, channels, task_types, limit=1):
         """ Atomically claim pending tasks for a worker.

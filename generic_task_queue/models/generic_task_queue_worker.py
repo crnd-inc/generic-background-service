@@ -44,6 +44,7 @@ class GenericTaskQueueWorker(models.Model):
                 record.uuid[:8] if record.uuid else '?',
                 record.service_name or 'unknown')
 
+    @api.private
     def heartbeat(self):
         """Update heartbeat timestamp. Reactivate if stale."""
         self.write({
@@ -51,6 +52,7 @@ class GenericTaskQueueWorker(models.Model):
             'state': 'active',
         })
 
+    @api.private
     def mark_dead(self):
         """Mark worker as dead and reassign its retriable tasks."""
         self.write({'state': 'dead'})
@@ -71,6 +73,7 @@ class GenericTaskQueueWorker(models.Model):
                     'task_error': 'Worker died during execution',
                 })
 
+    @api.private
     @api.model
     def find_or_create(self, service_name, dbname, uuid,
                        channels, task_types, max_parallel_jobs):
@@ -101,6 +104,7 @@ class GenericTaskQueueWorker(models.Model):
         })
         return self.create(vals)
 
+    @api.private
     @api.model
     def check_stale_workers(self, heartbeat_timeout=None):
         """Find workers that missed their heartbeat and handle them.
