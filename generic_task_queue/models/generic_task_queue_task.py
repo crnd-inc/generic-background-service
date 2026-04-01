@@ -99,6 +99,47 @@ class GenericTaskQueueTask(models.Model):
     date_started = fields.Datetime(readonly=True)
     date_completed = fields.Datetime(readonly=True)
 
+    # Fields that regular users are allowed to modify.
+    # All other fields require sudo (system) access.
+    # New fields are protected by default — safe default.
+    _user_writable_fields = frozenset({
+        'name', 'priority', 'channel', 'eta',
+        'timeout', 'max_retries', 'retry_policy',
+        'task_params',
+    })
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        """ Validate type_code on creation. """
+        from ..service.task_type_registry import TaskTypeRegistry
+        registry = TaskTypeRegistry()
+        available = registry.get_initialized_types()
+        for vals in vals_list:
+            type_code = vals.get('type_code')
+            if type_code and type_code not in available:
+                raise exceptions.ValidationError(
+                    self.env._(
+                        "Unknown task type '%(type_code)s'. "
+                        "Available types: %(available)s",
+                        type_code=type_code,
+                        available=', '.join(sorted(available.keys())),
+                    ))
+        return super().create(vals_list)
+
+    def write(self, vals):
+        """ Protect fields not in _user_writable_fields from
+            non-system users. """
+        if not self.env.su:
+            forbidden = set(vals.keys()) - self._user_writable_fields
+            if forbidden:
+                raise exceptions.AccessError(
+                    self.env._(
+                        "You cannot modify fields: %(fields)s. "
+                        "Use the task action buttons instead.",
+                        fields=', '.join(sorted(forbidden)),
+                    ))
+        return super().write(vals)
+
     def _check_transition(self, new_state):
         """ Validate that the state transition is allowed.
         """
@@ -116,6 +157,8 @@ class GenericTaskQueueTask(models.Model):
 
     def action_assign(self, worker):
         """ Transition: pending → assigned.
+
+            Called by worker (SUPERUSER context). No sudo needed.
         """
         self._check_transition('assigned')
         self.write({
@@ -125,6 +168,8 @@ class GenericTaskQueueTask(models.Model):
 
     def action_start(self):
         """ Transition: assigned → running.
+
+            Called by worker (SUPERUSER context). No sudo needed.
         """
         self._check_transition('running')
         self.write({
@@ -135,6 +180,8 @@ class GenericTaskQueueTask(models.Model):
 
     def action_done(self, result=None):
         """ Transition: running → done.
+
+            Called by worker (SUPERUSER context). No sudo needed.
         """
         self._check_transition('done')
         self.write({
@@ -146,6 +193,8 @@ class GenericTaskQueueTask(models.Model):
 
     def action_fail(self, error=None):
         """ Transition: running → failed.
+
+            Called by worker (SUPERUSER context). No sudo needed.
         """
         self.ensure_one()
         self._check_transition('failed')
@@ -158,6 +207,9 @@ class GenericTaskQueueTask(models.Model):
 
     def action_retry(self):
         """ Transition: failed → pending (if retriable).
+
+            Callable by task owner from UI. Uses sudo() to write
+            protected fields.
         """
         for record in self:
             if record.state != 'failed':
@@ -175,7 +227,7 @@ class GenericTaskQueueTask(models.Model):
                         "(%(max_retries)d).",
                         name=record.name,
                         max_retries=record.max_retries))
-        self.write({
+        self.sudo().write({
             'state': 'pending',
             'worker_id': False,
             'task_error': False,
@@ -185,11 +237,11 @@ class GenericTaskQueueTask(models.Model):
     def action_cancel(self):
         """ Transition: pending/assigned/running → cancelled.
 
-            If this task has children, cancel all pending/assigned
-            children too.
+            Callable by task owner from UI. Uses sudo() to write
+            protected fields. Cascades to non-terminal children.
         """
         self._check_transition('cancelled')
-        self.write({
+        self.sudo().write({
             'state': 'cancelled',
             'date_completed': fields.Datetime.now(),
         })

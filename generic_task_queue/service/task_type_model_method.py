@@ -38,6 +38,16 @@ class ModelMethodTaskType(AbstractTaskType):
                 "Model %s is not available" % model_name)
 
         records = env[model_name].browse(record_ids)
+
+        # Validate that all record IDs exist
+        if record_ids:
+            existing = records.exists()
+            if len(existing) != len(record_ids):
+                missing = set(record_ids) - set(existing.ids)
+                raise ValueError(
+                    "Records not found in %s: %s"
+                    % (model_name, missing))
+
         method = getattr(records, method_name)
 
         if not getattr(method, '_is_background_task', False):

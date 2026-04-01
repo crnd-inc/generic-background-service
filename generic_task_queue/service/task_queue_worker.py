@@ -176,14 +176,19 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 "Failed to start task %d", task_id, exc_info=True)
             return
 
-        # Phase 2: execute
+        # Phase 2: execute in the context of the creating user
         try:
             with self.with_env() as env:
                 task = env['generic.task.queue.task'].browse(task_id)
                 registry = TaskTypeRegistry()
                 task_type_cls = registry.get_task_type(task.type_code)
                 task_type = task_type_cls()
-                result = task_type.execute(env, task)
+
+                # Switch to creating user's context so access
+                # rules apply. Task types that need superuser
+                # access can explicitly call sudo().
+                user_env = env(user=task.create_uid.id)
+                result = task_type.execute(user_env, task)
 
                 # Call on_success hook
                 try:

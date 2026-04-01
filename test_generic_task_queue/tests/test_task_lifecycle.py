@@ -259,9 +259,10 @@ class TestTaskClaimTask(TransactionCase):
 
     def test_claim_respects_type_code(self):
         """claim_task should only return tasks with matching type_code."""
+        # Create a task with a different (but valid) type_code
         self.Task.create({
-            'name': 'Wrong type',
-            'type_code': 'some.other.type',
+            'name': 'Different type',
+            'type_code': 'test.task.type.echo',
             'channel': 'default',
         })
         claimed = self.Task.claim_task(
