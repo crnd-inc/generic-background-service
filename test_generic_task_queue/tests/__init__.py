@@ -4,4 +4,5 @@ from . import (  # noqa: F401
     test_task_lifecycle,
     test_task_queue_worker,
     test_integration,
+    test_background_task_decorator,
 )

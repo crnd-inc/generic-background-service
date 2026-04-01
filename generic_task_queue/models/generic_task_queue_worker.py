@@ -105,17 +105,24 @@ class GenericTaskQueueWorker(models.Model):
     def check_stale_workers(self, heartbeat_timeout=None):
         """Find workers that missed their heartbeat and handle them.
 
+        Uses FOR UPDATE SKIP LOCKED to prevent multiple workers
+        from processing the same stale peer simultaneously.
+
         Called periodically by active workers to detect dead peers.
         """
         if heartbeat_timeout is None:
             heartbeat_timeout = DEFAULT_HEARTBEAT_TIMEOUT
         threshold = fields.Datetime.now() - timedelta(
             seconds=heartbeat_timeout)
-        stale_workers = self.search([
-            ('state', '=', 'active'),
-            ('last_heartbeat', '<', threshold),
-        ])
-        if stale_workers:
+        self.env.cr.execute("""
+            SELECT id FROM generic_task_queue_worker
+            WHERE state = 'active'
+              AND last_heartbeat < %s
+            FOR UPDATE SKIP LOCKED
+        """, (threshold,))
+        worker_ids = [r[0] for r in self.env.cr.fetchall()]
+        if worker_ids:
+            stale_workers = self.browse(worker_ids)
             _logger.warning(
                 "Marking %d stale workers as dead: %s",
                 len(stale_workers),
@@ -123,4 +130,5 @@ class GenericTaskQueueWorker(models.Model):
                     w.name or w.uuid or str(w.id)
                     for w in stale_workers))
             stale_workers.mark_dead()
-        return stale_workers
+            return stale_workers
+        return self.browse()

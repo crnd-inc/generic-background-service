@@ -11,6 +11,7 @@
     ],
     "data": [
         "security/ir.model.access.csv",
+        "security/ir_rule.xml",
         "views/generic_task_queue_task_views.xml",
     ],
     "images": ["static/description/banner.png"],

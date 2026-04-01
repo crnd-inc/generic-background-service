@@ -34,6 +34,16 @@ class GenericTaskQueueTask(models.Model):
     _description = 'Task Queue Task'
     _order = 'priority, date_created'
 
+    def init(self):
+        """ Create partial composite index for claim_task query. """
+        self.env.cr.execute("""
+            CREATE INDEX IF NOT EXISTS
+                generic_task_queue_task_claim_idx
+            ON generic_task_queue_task
+                (priority, date_created)
+            WHERE state = 'pending'
+        """)
+
     name = fields.Char(required=True)
     type_code = fields.Char(
         required=True, index=True,
@@ -137,12 +147,13 @@ class GenericTaskQueueTask(models.Model):
     def action_fail(self, error=None):
         """ Transition: running → failed.
         """
+        self.ensure_one()
         self._check_transition('failed')
         self.write({
             'state': 'failed',
             'task_error': error,
             'date_completed': fields.Datetime.now(),
-            'retry_count': self[:1].retry_count + 1,
+            'retry_count': self.retry_count + 1,
         })
 
     def action_retry(self):
@@ -214,15 +225,20 @@ class GenericTaskQueueTask(models.Model):
             Task types should call this periodically during
             long-running execute() and return early if True.
 
-            Uses a fresh DB read to see the latest state,
-            even if another transaction set it to 'cancelled'.
+            Uses a separate cursor to see cancellation from
+            other transactions immediately.
         """
         self.ensure_one()
-        self.env.cr.execute(
-            "SELECT state FROM generic_task_queue_task WHERE id = %s",
-            (self.id,))
-        row = self.env.cr.fetchone()
-        return row and row[0] == 'cancelled'
+        new_cr = self.pool.cursor()
+        try:
+            new_cr.execute(
+                "SELECT state FROM generic_task_queue_task "
+                "WHERE id = %s",
+                (self.id,))
+            row = new_cr.fetchone()
+            return row and row[0] == 'cancelled'
+        finally:
+            new_cr.close()
 
     @api.model
     def claim_task(self, worker, channels, task_types, limit=1):

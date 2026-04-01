@@ -1,5 +1,9 @@
 from odoo import models, fields
 
+from odoo.addons.generic_task_queue.tools.decorators import (
+    background_task,
+)
+
 
 class TestTaskTarget(models.Model):
     _name = 'test.task.target'
@@ -9,6 +13,7 @@ class TestTaskTarget(models.Model):
     value = fields.Integer(default=0)
     processed = fields.Boolean(default=False)
 
+    @background_task
     def do_increment(self, amount=1):
         """Test method: increment value by amount."""
         for record in self:

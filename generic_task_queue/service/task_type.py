@@ -50,6 +50,10 @@ class AbstractTaskType(abc.ABC):
             - Create child tasks via
               ``env['generic.task.queue.task'].create(...)``
               to split work into sub-tasks.
+
+            Note: Return value is stored as JSON in the database.
+            Keep results small — store references (IDs, paths)
+            rather than large data blobs.
         """
         raise NotImplementedError
 

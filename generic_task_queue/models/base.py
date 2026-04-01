@@ -1,4 +1,8 @@
+import logging
+
 from odoo import models, api
+
+_logger = logging.getLogger(__name__)
 
 
 class Base(models.AbstractModel):
@@ -34,6 +38,15 @@ class Base(models.AbstractModel):
         """  # noqa: E501
         if record_ids is None:
             record_ids = self.ids
+
+        # Validate that method is decorated with @background_task
+        func = getattr(type(self), method, None)
+        if func and not getattr(func, '_is_background_task', False):
+            _logger.warning(
+                "Method %s.%s is not decorated with "
+                "@background_task. Task will fail at "
+                "execution time.",
+                self._name, method)
 
         if name is None:
             name = "%s.%s(%s)" % (

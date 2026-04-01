@@ -4,6 +4,8 @@ import traceback
 import threading
 import uuid
 
+from odoo import exceptions as odoo_exceptions
+
 from odoo.addons.generic_background_service import (
     AbstractBackgroundServiceWorker,
 )
@@ -191,7 +193,15 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         "Error in on_success hook for task %d",
                         task_id, exc_info=True)
 
-                task.action_done(result)
+                try:
+                    task.action_done(result)
+                except odoo_exceptions.ValidationError:
+                    # Task was already transitioned (timed out or
+                    # cancelled) by the worker thread — that's OK
+                    _logger.info(
+                        "Task %d already transitioned "
+                        "(likely timed out or cancelled)",
+                        task_id)
         except Exception as exc:
             _logger.error(
                 "Task %d failed", task_id, exc_info=True)
@@ -200,6 +210,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                     task = env['generic.task.queue.task'].browse(task_id)
 
                     # Call on_failure hook
+                    registry = TaskTypeRegistry()
                     task_type_cls = registry.get_task_type(
                         task.type_code)
                     task_type = task_type_cls()
@@ -210,7 +221,13 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             "Error in on_failure hook for task %d",
                             task_id, exc_info=True)
 
-                    task.action_fail(traceback.format_exc())
+                    try:
+                        task.action_fail(traceback.format_exc())
+                    except odoo_exceptions.ValidationError:
+                        _logger.info(
+                            "Task %d already transitioned "
+                            "(likely timed out or cancelled)",
+                            task_id)
             except Exception:
                 _logger.error(
                     "Failed to mark task %d as failed",
@@ -239,15 +256,31 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 self._timeout_task(task_info)
 
     def _timeout_task(self, task_info):
-        """ Mark a timed-out task as failed. """
+        """ Mark a timed-out task as failed.
+
+            Re-reads state from DB to handle the race where
+            the task thread completed between the timeout check
+            and this method.
+        """
         try:
             with self.with_env() as env:
                 task = env['generic.task.queue.task'].browse(
                     task_info.task_id)
+                # Re-read from DB to see if task thread
+                # already finished
+                task.invalidate_recordset()
                 if task.state == 'running':
-                    task.action_fail(
-                        "Execution timed out after %d seconds"
-                        % task_info.timeout)
+                    try:
+                        task.action_fail(
+                            "Execution timed out after %d seconds"
+                            % task_info.timeout)
+                    except odoo_exceptions.ValidationError:
+                        # Task thread finished between our read
+                        # and write — that's OK
+                        _logger.debug(
+                            "Task %d already transitioned "
+                            "(race with timeout)",
+                            task_info.task_id)
         except Exception:
             _logger.error(
                 "Error marking task %d as timed out",
@@ -258,21 +291,28 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
     def _auto_retry_failed(self):
         """ Automatically retry failed retriable tasks.
 
-            Searches for failed retriable tasks in our channels,
-            then checks each task's individual max_retries.
+            Uses FOR UPDATE SKIP LOCKED to prevent multiple
+            workers from retrying the same tasks simultaneously.
         """
+        if not self._channels or not self._task_types:
+            return
         try:
             with self.with_env() as env:
-                Task = env['generic.task.queue.task']
-                failed = Task.search([
-                    ('state', '=', 'failed'),
-                    ('retry_policy', '=', 'retriable'),
-                    ('channel', 'in', self._channels),
-                    ('type_code', 'in', self._task_types),
-                ], limit=10)
-                for task in failed:
-                    if task.retry_count < task.max_retries:
-                        task.action_retry()
+                env.cr.execute("""
+                    SELECT id FROM generic_task_queue_task
+                    WHERE state = 'failed'
+                      AND retry_policy = 'retriable'
+                      AND channel IN %s
+                      AND type_code IN %s
+                    LIMIT 10
+                    FOR UPDATE SKIP LOCKED
+                """, (tuple(self._channels), tuple(self._task_types)))
+                task_ids = [r[0] for r in env.cr.fetchall()]
+                if task_ids:
+                    tasks = env['generic.task.queue.task'].browse(task_ids)
+                    for task in tasks:
+                        if task.retry_count < task.max_retries:
+                            task.action_retry()
         except Exception:
             _logger.error(
                 "Error auto-retrying failed tasks", exc_info=True)

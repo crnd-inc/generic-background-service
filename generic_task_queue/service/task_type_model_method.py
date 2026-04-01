@@ -4,6 +4,8 @@ from .task_type import AbstractTaskType
 class ModelMethodTaskType(AbstractTaskType):
     """ Default task type that calls an Odoo model method.
 
+        Only methods decorated with ``@background_task`` are callable.
+
         Task params (JSON)::
 
             {
@@ -20,12 +22,6 @@ class ModelMethodTaskType(AbstractTaskType):
     """
     _name = 'task.type.model.method'
 
-    # Methods that must not be callable via this task type
-    _forbidden_methods = frozenset({
-        'unlink', 'write', 'create',
-        '__delattr__', '__setattr__',
-    })
-
     def execute(self, env, task):
         params = task.task_params
         model_name = params['model']
@@ -35,15 +31,19 @@ class ModelMethodTaskType(AbstractTaskType):
 
         if method_name.startswith('_'):
             raise ValueError(
-                "Calling private methods is not allowed: %s" % method_name)
-        if method_name in self._forbidden_methods:
-            raise ValueError(
-                "Calling method %s is not allowed" % method_name)
+                "Calling private methods is not allowed: %s"
+                % method_name)
         if model_name not in env:
             raise ValueError(
                 "Model %s is not available" % model_name)
 
         records = env[model_name].browse(record_ids)
         method = getattr(records, method_name)
+
+        if not getattr(method, '_is_background_task', False):
+            raise ValueError(
+                "Method %s.%s is not decorated with "
+                "@background_task" % (model_name, method_name))
+
         result = method(**kwargs)
         return result
