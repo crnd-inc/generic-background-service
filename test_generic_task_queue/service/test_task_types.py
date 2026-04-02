@@ -15,3 +15,61 @@ class TestTaskTypeEcho(AbstractTaskType):
 
     def execute(self, env, task):
         return task.task_params
+
+
+class TestTaskTypeBatchParent(AbstractTaskType):
+    """Task type that splits work into child tasks.
+
+    Demonstrates parent/child pattern:
+    - Parent receives list of items in params
+    - Creates one child per chunk
+    - Waits for all children to complete
+    - Aggregates results
+    """
+    _name = 'test.task.type.batch.parent'
+
+    _chunk_size = 2
+
+    def execute(self, env, task):
+        items = task.task_params.get('items', [])
+        Task = env['generic.task.queue.task']
+
+        # Split items into chunks and create child tasks
+        chunks = [
+            items[i:i + self._chunk_size]
+            for i in range(0, len(items), self._chunk_size)
+        ]
+        Task.create_children(task, 'test.task.type.batch.child', [
+            {'items': chunk} for chunk in chunks
+        ])
+
+        # Transition to waiting
+        task.action_wait_children()
+
+    def on_child_done(self, env, parent_task, child_task):
+        done = len(parent_task.child_ids.filtered(
+            lambda c: c.state == 'done'))
+        total = len(parent_task.child_ids)
+        if total:
+            parent_task.update_progress(int(done * 100 / total))
+
+    def on_all_children_done(self, env, parent_task):
+        all_results = []
+        for child in parent_task.child_ids:
+            r = child.task_result or {}
+            all_results.extend(r.get('processed', []))
+        return {
+            'total_processed': len(all_results),
+            'items': all_results,
+        }
+
+
+class TestTaskTypeBatchChild(AbstractTaskType):
+    """Child task type that processes a chunk of items."""
+    _name = 'test.task.type.batch.child'
+
+    def execute(self, env, task):
+        items = task.task_params.get('items', [])
+        # Simulate processing: double each item
+        processed = [i * 2 for i in items]
+        return {'processed': processed}

@@ -7,4 +7,5 @@ from . import (  # noqa: F401
     test_background_task_decorator,
     test_security,
     test_parent_child,
+    test_worker_integration,
 )
