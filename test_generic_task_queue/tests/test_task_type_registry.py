@@ -51,24 +51,26 @@ class TestTaskTypeRegistration(TransactionCase):
         r2 = TaskTypeRegistry()
         self.assertIs(r1, r2)
 
-    def test_late_registration_rejected(self):
-        """Task types defined after registry initialization
-        should be silently ignored."""
+    def test_late_registration_accepted(self):
+        """Task types registered after initialization should
+        be available via lazy build."""
         registry = TaskTypeRegistry()
 
-        # Registry is already initialized (locked)
-        self.assertFalse(registry._registration_allowed)
+        TaskTypeRegistry.register_type(
+            'late.task.type.test', type('LateType', (AbstractTaskType,), {
+                '_name': None,  # prevent __init_subclass__ re-register
+                'execute': lambda self, env, task: None,
+            }))
 
-        logger_name = (
-            'odoo.addons.generic_task_queue'
-            '.service.task_type_registry'
-        )
-        with self.assertLogs(logger_name, level='WARNING'):
-            TaskTypeRegistry.register_type(
-                'late.task.type', type('LateType', (), {}))
+        # Should be accessible via get_task_type (lazy build)
+        cls = registry.get_task_type('late.task.type.test')
+        self.assertTrue(cls)
 
-        self.assertNotIn(
-            'late.task.type', registry.get_initialized_types())
+        # Cleanup
+        TaskTypeRegistry._registered_types.pop(
+            'late.task.type.test', None)
+        TaskTypeRegistry._initialized_types.pop(
+            'late.task.type.test', None)
 
     def test_none_name_not_registered(self):
         """Classes with _name = None should not be registered."""

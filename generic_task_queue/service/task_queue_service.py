@@ -1,7 +1,6 @@
 from odoo.addons.generic_background_service import BackgroundService
 
 from .task_queue_worker import TaskQueueWorker
-from .task_type_registry import TaskTypeRegistry
 
 
 class TaskQueueService(BackgroundService):
@@ -32,12 +31,8 @@ class TaskQueueService(BackgroundService):
         return TaskQueueWorker
 
     def get_worker_params(self):
-        task_types = self._task_types
-        if not task_types:
-            registry = TaskTypeRegistry()
-            task_types = list(registry.get_initialized_types().keys())
         return {
-            'task_types': task_types,
+            'task_types': self._task_types,  # empty = all types
             'channels': self._channels,
             'max_parallel_jobs': self._max_parallel_jobs,
         }

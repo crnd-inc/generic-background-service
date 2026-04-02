@@ -116,17 +116,22 @@ class TestTaskStateTransitions(TransactionCase):
         self.task.action_fail('Error 2')
         self.assertEqual(self.task.retry_count, 2)
 
-    def test_retry_exceeds_max_raises(self):
-        """action_retry() should raise when max_retries exceeded."""
+    def test_manual_retry_allowed_beyond_max(self):
+        """Manual action_retry() should work even when
+        max_retries exceeded. The limit only applies to
+        automatic retries."""
         worker = self.worker
         self.task.max_retries = 1
 
         self.task.action_assign(worker)
         self.task.action_start()
         self.task.action_fail('Error')
-        # retry_count=1, max_retries=1 → cannot retry
-        with self.assertRaises(exceptions.ValidationError):
-            self.task.action_retry()
+        # retry_count=1, max_retries=1
+        # Manual retry should still work
+        self.task.action_retry()
+        self.assertEqual(self.task.state, 'pending')
+        # retry_count is preserved (not reset)
+        self.assertEqual(self.task.retry_count, 1)
 
     def test_retry_non_retriable_raises(self):
         """action_retry() on non-retriable task should raise."""

@@ -119,7 +119,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
 
         # 7. Claim and spawn new tasks if free slots
         free_slots = self._max_parallel_jobs - len(self._active_tasks)
-        if free_slots > 0 and self._task_types:
+        if free_slots > 0:
             self._claim_and_spawn(free_slots)
 
     def _do_heartbeat(self):
@@ -192,6 +192,14 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 # access can explicitly call sudo().
                 user_env = env(user=task.create_uid.id)
                 result = task_type.execute(user_env, task)
+
+                # If execute() called action_wait_children(),
+                # the task is now in 'waiting' state — don't
+                # call action_done. It will be completed later
+                # by _check_waiting_parent when all children finish.
+                task.invalidate_recordset(['state'])
+                if task.state == 'waiting':
+                    return
 
                 # Call on_success hook
                 try:
@@ -340,19 +348,30 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             Uses FOR UPDATE SKIP LOCKED to prevent multiple
             workers from retrying the same tasks simultaneously.
         """
-        if not self._channels or not self._task_types:
+        if not self._channels:
             return
         try:
             with self.with_env() as env:
-                env.cr.execute("""
-                    SELECT id FROM generic_task_queue_task
-                    WHERE state = 'failed'
-                      AND retry_policy = 'retriable'
-                      AND channel IN %s
-                      AND type_code IN %s
-                    LIMIT 10
-                    FOR UPDATE SKIP LOCKED
-                """, (tuple(self._channels), tuple(self._task_types)))
+                if self._task_types:
+                    env.cr.execute("""
+                        SELECT id FROM generic_task_queue_task
+                        WHERE state = 'failed'
+                          AND retry_policy = 'retriable'
+                          AND channel IN %s
+                          AND type_code IN %s
+                        LIMIT 10
+                        FOR UPDATE SKIP LOCKED
+                    """, (tuple(self._channels),
+                          tuple(self._task_types)))
+                else:
+                    env.cr.execute("""
+                        SELECT id FROM generic_task_queue_task
+                        WHERE state = 'failed'
+                          AND retry_policy = 'retriable'
+                          AND channel IN %s
+                        LIMIT 10
+                        FOR UPDATE SKIP LOCKED
+                    """, (tuple(self._channels),))
                 task_ids = [r[0] for r in env.cr.fetchall()]
                 if task_ids:
                     tasks = env['generic.task.queue.task'].browse(task_ids)

@@ -11,7 +11,7 @@
                   decoration-muted="state == 'cancelled'"
                   decoration-info="state == 'running'">
                 <field name="name"/>
-                <field name="type_code"/>
+                <field name="type_id"/>
                 <field name="state"/>
                 <field name="channel"/>
                 <field name="priority"/>
@@ -47,14 +47,33 @@
                            statusbar_visible="pending,assigned,running,waiting,done"/>
                 </header>
                 <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_open_child_tasks"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-tasks"
+                                invisible="child_count == 0">
+                            <field name="child_count"
+                                   widget="statinfo"
+                                   string="Sub-tasks"/>
+                        </button>
+                        <button name="action_open_parent_task"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-level-up"
+                                invisible="not parent_id"
+                                string="Parent Task"/>
+                    </div>
                     <group>
                         <group string="Task">
                             <field name="name"/>
-                            <field name="type_code"/>
+                            <field name="type_id"/>
                             <field name="channel"/>
                             <field name="priority"/>
                             <field name="eta"/>
                             <field name="timeout"/>
+                            <field name="parent_id"
+                                   invisible="not parent_id"/>
                         </group>
                         <group string="Execution">
                             <field name="worker_id"/>
@@ -62,6 +81,7 @@
                             <field name="retry_policy"/>
                             <field name="max_retries"/>
                             <field name="retry_count"/>
+                            <field name="create_uid" string="Created by"/>
                         </group>
                     </group>
                     <group string="Parameters">
@@ -79,17 +99,6 @@
                         <field name="date_started"/>
                         <field name="date_completed"/>
                     </group>
-                    <group string="Sub-tasks"
-                           invisible="not child_ids">
-                        <field name="child_ids" nolabel="1">
-                            <list>
-                                <field name="name"/>
-                                <field name="state"/>
-                                <field name="progress" widget="progressbar"/>
-                            </list>
-                        </field>
-                    </group>
-                    <field name="parent_id" invisible="not parent_id"/>
                 </sheet>
             </form>
         </field>
@@ -102,7 +111,7 @@
         <field name="arch" type="xml">
             <search>
                 <field name="name"/>
-                <field name="type_code"/>
+                <field name="type_id"/>
                 <field name="channel"/>
                 <filter name="pending" string="Pending"
                         domain="[('state', '=', 'pending')]"/>
@@ -119,7 +128,7 @@
                     <filter name="group_channel" string="Channel"
                             context="{'group_by': 'channel'}"/>
                     <filter name="group_type" string="Type"
-                            context="{'group_by': 'type_code'}"/>
+                            context="{'group_by': 'type_id'}"/>
                     <filter name="group_worker" string="Worker"
                             context="{'group_by': 'worker_id'}"/>
                 </group>
@@ -163,6 +172,27 @@
         <field name="view_mode">list</field>
     </record>
 
+    <!-- Task Type Tree View -->
+    <record id="view_generic_task_queue_task_type_tree" model="ir.ui.view">
+        <field name="name">generic.task.queue.task.type.tree</field>
+        <field name="model">generic.task.queue.task.type</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="name"/>
+                <field name="code"/>
+                <field name="module"/>
+                <field name="active"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Task Type Action -->
+    <record id="action_generic_task_queue_task_type" model="ir.actions.act_window">
+        <field name="name">Task Types</field>
+        <field name="res_model">generic.task.queue.task.type</field>
+        <field name="view_mode">list</field>
+    </record>
+
     <!-- Menu -->
     <menuitem id="menu_task_queue_root"
               name="Task Queue"
@@ -172,6 +202,11 @@
               parent="menu_task_queue_root"
               action="action_generic_task_queue_task"
               sequence="10"/>
+    <menuitem id="menu_task_queue_task_types"
+              name="Task Types"
+              parent="menu_task_queue_root"
+              action="action_generic_task_queue_task_type"
+              sequence="15"/>
     <menuitem id="menu_task_queue_workers"
               name="Workers"
               parent="menu_task_queue_root"

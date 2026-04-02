@@ -47,8 +47,12 @@ class GenericTaskQueueTask(models.Model):
         """)
 
     name = fields.Char(required=True)
+    type_id = fields.Many2one(
+        'generic.task.queue.task.type',
+        required=True, index=True, ondelete='restrict',
+        help="Task type that defines how to execute this task.")
     type_code = fields.Char(
-        required=True, index=True,
+        related='type_id.code', store=True, index=True,
         help="Dotted name of the task type "
              "(e.g. 'task.type.model.method')")
     state = fields.Selection(
@@ -99,6 +103,8 @@ class GenericTaskQueueTask(models.Model):
     child_ids = fields.One2many(
         'generic.task.queue.task', 'parent_id',
         string='Sub-tasks')
+    child_count = fields.Integer(
+        compute='_compute_child_count', string='Sub-task Count')
     date_created = fields.Datetime(
         default=fields.Datetime.now, required=True,
         index=True, readonly=True)
@@ -116,21 +122,50 @@ class GenericTaskQueueTask(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        """ Validate type_code on creation. """
-        from ..service.task_type_registry import TaskTypeRegistry
-        registry = TaskTypeRegistry()
-        available = registry.get_initialized_types()
+        """ Resolve type_code to type_id if needed. """
+        TaskType = self.env['generic.task.queue.task.type']
         for vals in vals_list:
-            type_code = vals.get('type_code')
-            if type_code and type_code not in available:
-                raise exceptions.ValidationError(
-                    self.env._(
-                        "Unknown task type '%(type_code)s'. "
-                        "Available types: %(available)s",
-                        type_code=type_code,
-                        available=', '.join(sorted(available.keys())),
-                    ))
+            if 'type_id' not in vals and 'type_code' in vals:
+                # Resolve type_code string to type_id
+                code = vals.pop('type_code')
+                task_type = TaskType.search([
+                    ('code', '=', code),
+                    ('active', '=', True),
+                ], limit=1)
+                if not task_type:
+                    raise exceptions.ValidationError(
+                        self.env._(
+                            "Unknown task type '%(type_code)s'.",
+                            type_code=code,
+                        ))
+                vals['type_id'] = task_type.id
         return super().create(vals_list)
+
+    def _compute_child_count(self):
+        for record in self:
+            record.child_count = len(record.child_ids)
+
+    def action_open_child_tasks(self):
+        """ Open child tasks in a list view. """
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'name': 'Sub-tasks: %s' % self.name,
+            'res_model': 'generic.task.queue.task',
+            'view_mode': 'list,form',
+            'domain': [('parent_id', '=', self.id)],
+        }
+
+    def action_open_parent_task(self):
+        """ Open the parent task in form view. """
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'name': 'Parent Task',
+            'res_model': 'generic.task.queue.task',
+            'res_id': self.parent_id.id,
+            'view_mode': 'form',
+        }
 
     def write(self, vals):
         """ Protect fields not in _user_writable_fields from
@@ -238,6 +273,10 @@ class GenericTaskQueueTask(models.Model):
 
             Callable by task owner from UI. Uses sudo() to write
             protected fields.
+
+            Manual retry is always allowed regardless of
+            max_retries — the limit only applies to automatic
+            retries by the worker.
         """
         for record in self:
             if record.state != 'failed':
@@ -248,13 +287,6 @@ class GenericTaskQueueTask(models.Model):
                     self.env._(
                         "Task '%(name)s' is not retriable.",
                         name=record.name))
-            if record.retry_count >= record.max_retries:
-                raise exceptions.ValidationError(
-                    self.env._(
-                        "Task '%(name)s' has exceeded max retries "
-                        "(%(max_retries)d).",
-                        name=record.name,
-                        max_retries=record.max_retries))
         self.sudo().write({
             'state': 'pending',
             'worker_id': False,
@@ -426,20 +458,36 @@ class GenericTaskQueueTask(models.Model):
             :param int limit: max number of tasks to claim
             :return: recordset of claimed tasks
         """
-        if not channels or not task_types:
+        if not channels:
             return self.browse()
         # Flush pending ORM writes so raw SQL sees current state
         self.flush_model()
-        self.env.cr.execute("""
-            SELECT id FROM generic_task_queue_task
-            WHERE state = 'pending'
-              AND channel IN %s
-              AND type_code IN %s
-              AND (eta IS NULL OR eta <= (NOW() AT TIME ZONE 'UTC'))
-            ORDER BY priority, date_created
-            LIMIT %s
-            FOR UPDATE SKIP LOCKED
-        """, (tuple(channels), tuple(task_types), limit))
+
+        # Build query — skip type filter if task_types is empty
+        # (empty means "all types")
+        if task_types:
+            self.env.cr.execute("""
+                SELECT id FROM generic_task_queue_task
+                WHERE state = 'pending'
+                  AND channel IN %s
+                  AND type_code IN %s
+                  AND (eta IS NULL
+                       OR eta <= (NOW() AT TIME ZONE 'UTC'))
+                ORDER BY priority, date_created
+                LIMIT %s
+                FOR UPDATE SKIP LOCKED
+            """, (tuple(channels), tuple(task_types), limit))
+        else:
+            self.env.cr.execute("""
+                SELECT id FROM generic_task_queue_task
+                WHERE state = 'pending'
+                  AND channel IN %s
+                  AND (eta IS NULL
+                       OR eta <= (NOW() AT TIME ZONE 'UTC'))
+                ORDER BY priority, date_created
+                LIMIT %s
+                FOR UPDATE SKIP LOCKED
+            """, (tuple(channels), limit))
         task_ids = [r[0] for r in self.env.cr.fetchall()]
         if task_ids:
             tasks = self.browse(task_ids)

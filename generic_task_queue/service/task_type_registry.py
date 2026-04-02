@@ -16,17 +16,14 @@ class TaskTypeRegistry:
         Supports extension: multiple classes with the same _name
         are merged into a single class (MRO-based inheritance).
 
-        Registration is locked after first initialization
-        (when the singleton is created). Task types defined after
-        that point are silently ignored with a warning.
+        Registration is always open — task types can be registered
+        at any time (including after module loading). New types
+        are built lazily on first access via get_task_type().
     """
     _registered_types: Dict[str, List[Type]] = collections.defaultdict(list)
 
     # Initialized (merged) task type classes: {name: cls}
     _initialized_types: Dict[str, Type] = {}
-
-    # Registration is locked after initialize()
-    _registration_allowed = True
 
     # Singleton instance
     _registry_instance = None
@@ -39,13 +36,9 @@ class TaskTypeRegistry:
             :param type type_cls: class that defines (or extends)
                 the task type
         """
-        if not cls._registration_allowed:
-            _logger.warning(
-                "Registration of task types is not allowed at the moment. "
-                "May be you have to add module that defines task type "
-                "'%s' to server_wide_modules config param.", name)
-            return
         cls._registered_types[name].append(type_cls)
+        # Invalidate initialized cache so it's rebuilt on next access
+        cls._initialized_types.pop(name, None)
 
     @classmethod
     def initialize(cls):
@@ -64,25 +57,38 @@ class TaskTypeRegistry:
 
                 type('my.task.type', (MyTaskType, MyTaskTypeExtension), {})
         """
-        cls._registration_allowed = False
         for type_name, type_defs in cls._registered_types.items():
-            type_cls = type(type_name, tuple(type_defs), {})
-            cls._initialized_types[type_name] = type_cls
+            if type_name not in cls._initialized_types:
+                type_cls = type(type_name, tuple(type_defs), {})
+                cls._initialized_types[type_name] = type_cls
 
     @classmethod
     def get_initialized_types(cls) -> Dict[str, Type]:
         """ Return dict of all initialized task types.
         """
+        # Ensure all registered types are initialized
+        cls.initialize()
         return cls._initialized_types
 
     @classmethod
     def get_task_type(cls, type_code):
         """ Return the task type class for the given type code.
 
+            Lazy-builds the merged class on first access if the
+            type was registered after initial initialization.
+
             :param str type_code: dotted task type name
             :return: task type class
             :raises KeyError: if type_code is not registered
         """
+        if type_code not in cls._initialized_types:
+            if type_code in cls._registered_types:
+                # Late registration — build now
+                defs = cls._registered_types[type_code]
+                cls._initialized_types[type_code] = type(
+                    type_code, tuple(defs), {})
+            else:
+                raise KeyError(type_code)
         return cls._initialized_types[type_code]
 
     def __new__(cls, *args, **kwargs):
