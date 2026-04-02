@@ -36,7 +36,7 @@
                     <button name="action_cancel"
                             string="Cancel"
                             type="object"
-                            invisible="state not in ('pending', 'assigned', 'running')"
+                            invisible="state not in ('pending', 'assigned', 'running', 'waiting')"
                             confirm="Are you sure you want to cancel this task?"/>
                     <button name="action_retry"
                             string="Retry"
@@ -44,7 +44,7 @@
                             invisible="state != 'failed'"
                             class="btn-primary"/>
                     <field name="state" widget="statusbar"
-                           statusbar_visible="pending,assigned,running,done"/>
+                           statusbar_visible="pending,assigned,running,waiting,done"/>
                 </header>
                 <sheet>
                     <group>

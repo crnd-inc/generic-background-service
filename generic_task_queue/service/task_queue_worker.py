@@ -108,13 +108,16 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         # 3. Check for timed-out task threads
         self._check_timeouts()
 
-        # 4. Auto-retry failed retriable tasks
+        # 4. Check waiting parents
+        self._check_waiting_parents()
+
+        # 5. Auto-retry failed retriable tasks
         self._auto_retry_failed()
 
-        # 5. Periodically check for stale peer workers
+        # 6. Periodically check for stale peer workers
         self._check_stale_peers()
 
-        # 6. Claim and spawn new tasks if free slots
+        # 7. Claim and spawn new tasks if free slots
         free_slots = self._max_parallel_jobs - len(self._active_tasks)
         if free_slots > 0 and self._task_types:
             self._claim_and_spawn(free_slots)
@@ -200,6 +203,8 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
 
                 try:
                     task.action_done(result)
+                    # Notify parent if this is a child task
+                    self._notify_parent_on_child_done(env, task)
                 except odoo_exceptions.ValidationError:
                     # Task was already transitioned (timed out or
                     # cancelled) by the worker thread — that's OK
@@ -292,6 +297,42 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 task_info.task_id, exc_info=True)
         # Mark timeout so we don't re-check
         task_info.timeout = 0
+
+    def _check_waiting_parents(self):
+        """ Check waiting parent tasks and complete them
+            if all children are done. """
+        try:
+            with self.with_env() as env:
+                Task = env['generic.task.queue.task']
+                waiting = Task.search([
+                    ('state', '=', 'waiting'),
+                    ('worker_id.id', '=', self._worker_record_id),
+                ], limit=10)
+                for task in waiting:
+                    task._check_waiting_parent()
+        except Exception:
+            _logger.error(
+                "Error checking waiting parents", exc_info=True)
+
+    def _notify_parent_on_child_done(self, env, child_task):
+        """ Notify parent task that a child has completed.
+
+            Calls on_child_done hook on the parent's task type.
+        """
+        if not child_task.parent_id:
+            return
+        parent = child_task.parent_id
+        if parent.state != 'waiting':
+            return
+        try:
+            registry = TaskTypeRegistry()
+            task_type_cls = registry.get_task_type(parent.type_code)
+            task_type = task_type_cls()
+            task_type.on_child_done(env, parent, child_task)
+        except Exception:
+            _logger.error(
+                "Error in on_child_done for parent %d",
+                parent.id, exc_info=True)
 
     def _auto_retry_failed(self):
         """ Automatically retry failed retriable tasks.

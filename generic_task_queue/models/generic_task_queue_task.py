@@ -8,6 +8,7 @@ TASK_STATES = [
     ('pending', 'Pending'),
     ('assigned', 'Assigned'),
     ('running', 'Running'),
+    ('waiting', 'Waiting for children'),
     ('done', 'Done'),
     ('failed', 'Failed'),
     ('cancelled', 'Cancelled'),
@@ -17,7 +18,8 @@ TASK_STATES = [
 ALLOWED_TRANSITIONS = {
     'pending': ['assigned', 'cancelled'],
     'assigned': ['running', 'cancelled'],
-    'running': ['done', 'failed', 'cancelled'],
+    'running': ['done', 'failed', 'waiting', 'cancelled'],
+    'waiting': ['done', 'failed', 'cancelled'],
     'failed': ['pending', 'cancelled'],
     'done': [],
     'cancelled': [],
@@ -68,6 +70,10 @@ class GenericTaskQueueTask(models.Model):
     task_error = fields.Text(
         readonly=True,
         help="Error traceback if the task failed.")
+    task_error_data = fields.Json(
+        readonly=True,
+        help="Structured error data (JSON). Use for programmatic "
+             "error handling alongside task_error text.")
     worker_id = fields.Many2one(
         'generic.task.queue.worker', readonly=True,
         index=True, ondelete='set null')
@@ -195,19 +201,37 @@ class GenericTaskQueueTask(models.Model):
         })
 
     @api.private
-    def action_fail(self, error=None):
-        """ Transition: running → failed.
+    def action_wait_children(self):
+        """ Transition: running → waiting.
+
+            Called by task types that spawn children and need
+            to wait for all of them to complete before finishing.
+        """
+        self._check_transition('waiting')
+        self.write({
+            'state': 'waiting',
+        })
+
+    @api.private
+    def action_fail(self, error=None, error_data=None):
+        """ Transition: running/waiting → failed.
 
             Called by worker (SUPERUSER context). No sudo needed.
+
+            :param str error: error message / traceback text
+            :param dict error_data: structured error data (JSON)
         """
         self.ensure_one()
         self._check_transition('failed')
-        self.write({
+        vals = {
             'state': 'failed',
             'task_error': error,
             'date_completed': fields.Datetime.now(),
             'retry_count': self.retry_count + 1,
-        })
+        }
+        if error_data is not None:
+            vals['task_error_data'] = error_data
+        self.write(vals)
 
     def action_retry(self):
         """ Transition: failed → pending (if retriable).
@@ -251,9 +275,99 @@ class GenericTaskQueueTask(models.Model):
         })
         # Cancel non-terminal children
         children_to_cancel = self.mapped('child_ids').filtered(
-            lambda c: c.state in ('pending', 'assigned', 'running'))
+            lambda c: c.state in (
+                'pending', 'assigned', 'running', 'waiting'))
         if children_to_cancel:
             children_to_cancel.action_cancel()
+
+    @api.private
+    def _check_waiting_parent(self):
+        """ Check if this waiting parent's children are all done.
+
+            Called by the worker's poll loop for tasks in 'waiting'
+            state. Transitions the parent to done or failed
+            based on children's states.
+        """
+        self.ensure_one()
+        if self.state != 'waiting':
+            return
+
+        children = self.child_ids
+        if not children:
+            # No children — nothing to wait for
+            self.action_done()
+            return
+
+        child_states = set(children.mapped('state'))
+
+        # If any child is still in progress, keep waiting
+        active_states = {'pending', 'assigned', 'running', 'waiting'}
+        if child_states & active_states:
+            return
+
+        # All children are in terminal states (done/failed/cancelled)
+        # Check if any child failed permanently
+        failed_children = children.filtered(
+            lambda c: c.state == 'failed')
+        non_retriable_failures = failed_children.filtered(
+            lambda c: (c.retry_policy != 'retriable'
+                       or c.retry_count >= c.max_retries))
+
+        if non_retriable_failures:
+            self.action_fail(
+                "Child tasks failed: %s" % ', '.join(
+                    non_retriable_failures.mapped('name')))
+            return
+
+        # If there are retriable failures still pending retry,
+        # keep waiting
+        if failed_children:
+            return
+
+        # All children done (or cancelled) — call the hook
+        # and complete the parent
+        from ..service.task_type_registry import TaskTypeRegistry
+        registry = TaskTypeRegistry()
+        try:
+            task_type_cls = registry.get_task_type(self.type_code)
+            task_type = task_type_cls()
+            result = task_type.on_all_children_done(self.env, self)
+        except KeyError:
+            result = None
+        except Exception:
+            _logger.error(
+                "Error in on_all_children_done for task %d",
+                self.id, exc_info=True)
+            result = None
+
+        self.action_done(result)
+
+    @api.private
+    @api.model
+    def create_children(self, parent_task, type_code, params_list,
+                        **common_vals):
+        """ Create multiple child tasks for a parent task.
+
+            :param parent_task: parent task record
+            :param str type_code: task type for all children
+            :param list params_list: list of task_params dicts
+            :param common_vals: common field values applied
+                to all children (e.g., channel, priority)
+            :return: recordset of created child tasks
+        """
+        vals_list = []
+        for i, params in enumerate(params_list):
+            vals = {
+                'name': '%s [%d/%d]' % (
+                    parent_task.name, i + 1, len(params_list)),
+                'type_code': type_code,
+                'parent_id': parent_task.id,
+                'task_params': params,
+                'channel': parent_task.channel,
+            }
+            vals.update(common_vals)
+            vals_list.append(vals)
+        return self.create(vals_list)
 
     @api.private
     def update_progress(self, value):

@@ -78,3 +78,25 @@ class AbstractTaskType(abc.ABC):
             :param task: task record (state is already 'failed')
             :param exc: the exception that was raised
         """
+
+    def on_child_done(self, env, parent_task, child_task):
+        """ Called each time a child task completes.
+
+            Override for incremental progress tracking
+            or partial result collection.
+
+            :param env: Odoo environment
+            :param parent_task: the parent task record (in 'waiting')
+            :param child_task: the child task that just completed
+        """
+
+    def on_all_children_done(self, env, parent_task):
+        """ Called when all child tasks have completed.
+
+            Override to aggregate results from children.
+            Return value becomes the parent's task_result.
+
+            :param env: Odoo environment
+            :param parent_task: the parent task record
+            :return: aggregated result (stored as JSON in parent)
+        """
