@@ -352,8 +352,30 @@ class GenericTaskQueueTask(models.Model):
             Called by the worker's poll loop for tasks in 'waiting'
             state. Transitions the parent to done or failed
             based on children's states.
+
+            Uses SELECT FOR UPDATE SKIP LOCKED to prevent two workers
+            (or two concurrent child-done notifications) from calling
+            on_all_children_done() simultaneously on the same parent.
+            If another transaction already holds the lock, this call
+            is a no-op — the lock holder will complete the parent.
         """
         self.ensure_one()
+
+        # Acquire a row-level lock before inspecting children.
+        # SKIP LOCKED: if already locked by another transaction, return
+        # immediately — that transaction is responsible for completing
+        # this parent.
+        self.flush_model()
+        self.env.cr.execute(
+            "SELECT id FROM generic_task_queue_task "
+            "WHERE id = %s AND state = 'waiting' "
+            "FOR UPDATE SKIP LOCKED",
+            (self.id,))
+        if not self.env.cr.fetchone():
+            return
+
+        # Re-read state from DB after acquiring lock (cache may be stale)
+        self.invalidate_recordset(['state'])
         if self.state != 'waiting':
             return
 

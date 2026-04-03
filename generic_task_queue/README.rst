@@ -333,7 +333,7 @@ In case of trouble, please check there if your issue has already been reported.
 
 
 Maintainer
-''''''''''
+==========
 .. image:: https://crnd.pro/web/image/3699/300x140/crnd.png
 
 Our web site: https://crnd.pro/
