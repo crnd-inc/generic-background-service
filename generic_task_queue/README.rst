@@ -30,6 +30,7 @@ Key features:
 - **Parallel execution** -- workers can run multiple tasks simultaneously
   (configurable ``_max_parallel_jobs``)
 - **Progress tracking** -- task types report progress (0-100) visible in UI
+  with real-time updates via bus notifications
 - **Cooperative cancellation** -- cancel running tasks from the UI;
   task types check ``task.is_cancelled()`` and exit early
 - **Automatic retry** -- failed retriable tasks are automatically retried
@@ -40,8 +41,11 @@ Key features:
 - **Worker health monitoring** -- heartbeat-based detection of dead workers
   with automatic task reassignment
 - **Channel-based routing** -- route tasks to specific workers via channels
+- **Real-time UI widgets** -- OWL widgets for live progress display without
+  polling
 - **Security** -- tasks execute as the creating user, field-level write
   protection, ``@api.private`` on worker-internal methods
+- **Automatic vacuum** -- configurable cron job cleans up old terminal tasks
 
 
 Quick start
@@ -151,6 +155,81 @@ create a separate service. Just define the class and create tasks.
             return {'total': len(results), 'ids': results}
 
 
+Real-time UI widgets
+====================
+
+The module ships two OWL widgets that update live via bus notifications
+without polling or page refresh.
+
+``gtq_task_progress``
+---------------------
+
+Live progress bar for the task model's own list and form views.
+Place on the ``progress`` integer field:
+
+.. code-block:: xml
+
+    <field name="progress" widget="gtq_task_progress"/>
+
+Shows a spinner and animated progress bar while the task is active.
+Shows the final DB value (e.g. 100%) when the task is done.
+Calls ``record.load()`` automatically when the task reaches a terminal
+state so the rest of the form refreshes.
+
+``gtq_task_auto_refresh``
+-------------------------
+
+For consumer records that reference a task via a Many2one field.
+Subscribes to bus notifications for that task and triggers a
+``record.load()`` on the consumer record when the task completes.
+
+.. code-block:: xml
+
+    <field name="task_id" widget="gtq_task_auto_refresh"
+           options="{
+               'state_field': 'task_state',
+               'progress_field': 'task_progress',
+               'label': 'Processing, please wait...'
+           }"/>
+
+Options:
+
++------------------+-------------------------------------------------------+
+| Option           | Description                                           |
++==================+=======================================================+
+| ``show_progress``| Show spinner + progress bar while active.             |
+|                  | Default: ``true``.                                    |
++------------------+-------------------------------------------------------+
+| ``label``        | Text shown above the progress block while active.     |
+|                  | Defaults to task display name. Pass ``""`` to hide.   |
++------------------+-------------------------------------------------------+
+| ``state_field``  | Field on the consumer record holding the task state.  |
+|                  | Initialises the spinner correctly when the form opens |
+|                  | mid-run (cold-start fix). Example: ``'task_state'``.  |
++------------------+-------------------------------------------------------+
+| ``progress_field``| Field on the consumer record holding task progress.  |
+|                  | Initialises the bar position on cold open.            |
+|                  | Example: ``'task_progress'``.                         |
++------------------+-------------------------------------------------------+
+
+The widget renders nothing when the task is inactive. It is safe to leave
+it in the view at all times.
+
+Sending progress from a task type
+----------------------------------
+
+Call ``task.update_progress(value)`` with a value between 0 and 100.
+This commits immediately via a separate cursor (visible to the UI without
+waiting for the task transaction to finish) and sends a bus notification:
+
+.. code-block:: python
+
+    def execute(self, env, task):
+        for i, item in enumerate(task.task_params['items']):
+            process(item)
+            task.update_progress(int((i + 1) / len(items) * 100))
+
+
 Configuration
 =============
 
@@ -185,6 +264,35 @@ running on a separate machine/container.
 For most use cases, the default worker handles everything.
 
 
+Vacuum / cleanup
+================
+
+A daily cron job deletes old terminal tasks (``done``, ``failed``,
+``cancelled``). It is installed with ``noupdate="1"`` so you can freely
+adjust its schedule from *Technical → Automation → Scheduled Actions*.
+
+Two `System Parameters <https://www.odoo.com/documentation/18.0/developer/reference/backend/system_parameters.html>`_
+control the behaviour:
+
++-------------------------------------------+---------------------------+
+| Key                                       | Default  | Description     |
++===========================================+==========+=================+
+| ``generic_task_queue.vacuum_days``        | ``30``   | Delete tasks    |
+|                                           |          | completed more  |
+|                                           |          | than N days ago.|
+|                                           |          | Set to ``0`` to |
+|                                           |          | disable.        |
++-------------------------------------------+---------------------------+
+| ``generic_task_queue.vacuum_batch_size``  | ``1000`` | Max tasks per   |
+|                                           |          | cron run. Tune  |
+|                                           |          | upward for high-|
+|                                           |          | volume installs.|
++-------------------------------------------+---------------------------+
+
+Only root tasks are searched; child tasks are removed automatically via
+cascade delete.
+
+
 Architecture
 ============
 
@@ -203,6 +311,8 @@ Architecture
   one worker per database; default service handles all task types
 - **TaskQueueWorker** -- thread manager that runs task execution in
   separate threads, handles heartbeat, timeouts, and auto-retry
+- **Bus notifications** -- ``gtq_task_update`` and ``gtq_task_progress``
+  channels deliver real-time state and progress to the UI
 
 Security:
 

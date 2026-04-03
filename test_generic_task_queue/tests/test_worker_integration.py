@@ -18,7 +18,7 @@ class TestWorkerProcessesTask(TransactionCase):
             'service_name': 'test.service',
             'state': 'active',
         })
-        self.registry = TaskTypeRegistry()
+        self.task_type_registry = TaskTypeRegistry()
 
     def _execute_task(self, task):
         """Simulate what the worker does: claim → start → execute
@@ -26,7 +26,7 @@ class TestWorkerProcessesTask(TransactionCase):
         task.sudo().action_assign(self.worker)
         task.sudo().action_start()
 
-        task_type_cls = self.registry.get_task_type(task.type_code)
+        task_type_cls = self.task_type_registry.get_task_type(task.type_code)
         task_type = task_type_cls()
         try:
             result = task_type.execute(self.env, task)
@@ -116,14 +116,14 @@ class TestBatchParentChildE2E(TransactionCase):
             'service_name': 'test.service',
             'state': 'active',
         })
-        self.registry = TaskTypeRegistry()
+        self.task_type_registry = TaskTypeRegistry()
 
     def _execute_task(self, task):
         """Execute a task synchronously."""
         task.sudo().action_assign(self.worker)
         task.sudo().action_start()
 
-        task_type_cls = self.registry.get_task_type(task.type_code)
+        task_type_cls = self.task_type_registry.get_task_type(task.type_code)
         task_type = task_type_cls()
         try:
             result = task_type.execute(self.env, task)
