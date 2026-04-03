@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <record id="ir_cron_gc_tasks" model="ir.cron">
+        <field name="name">Task Queue: Vacuum old tasks</field>
+        <field name="model_id" ref="model_generic_task_queue_task"/>
+        <field name="state">code</field>
+        <field name="code">model._gc_tasks()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">days</field>
+    </record>
+
+</odoo>

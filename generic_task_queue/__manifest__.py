@@ -14,6 +14,7 @@
         "security/ir.model.access.csv",
         "security/ir_rule.xml",
         "views/generic_task_queue_task_views.xml",
+        "data/cron.xml",
     ],
     "assets": {
         "web.assets_backend": [

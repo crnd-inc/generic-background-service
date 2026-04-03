@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from odoo import models, fields, api, exceptions
 
@@ -593,3 +594,35 @@ class GenericTaskQueueTask(models.Model):
         if parent_id:
             vals['parent_id'] = parent_id
         return self.create(vals)
+
+    @api.model
+    def _gc_tasks(self):
+        """ Delete old terminal tasks. Called by the vacuum cron job.
+
+            Retention period and batch size are configurable via
+            System Parameters:
+              generic_task_queue.vacuum_days       (default: 30)
+              generic_task_queue.vacuum_batch_size (default: 1000)
+
+            Set vacuum_days to 0 to disable cleanup entirely.
+
+            Only root tasks (parent_id = False) are searched; children
+            are removed automatically via their ondelete='cascade'.
+        """
+        get_param = self.env['ir.config_parameter'].sudo().get_param
+        days = int(get_param('generic_task_queue.vacuum_days', 30))
+        if days <= 0:
+            return
+        batch_size = int(
+            get_param('generic_task_queue.vacuum_batch_size', 1000))
+        cutoff = fields.Datetime.now() - timedelta(days=days)
+        tasks = self.sudo().search([
+            ('state', 'in', ['done', 'failed', 'cancelled']),
+            ('date_completed', '<', cutoff),
+            ('parent_id', '=', False),
+        ], limit=batch_size)
+        if tasks:
+            _logger.info(
+                "Vacuuming %d completed tasks older than %d days",
+                len(tasks), days)
+            tasks.unlink()
