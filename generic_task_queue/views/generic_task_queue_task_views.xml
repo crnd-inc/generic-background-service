@@ -6,16 +6,17 @@
         <field name="name">generic.task.queue.task.tree</field>
         <field name="model">generic.task.queue.task</field>
         <field name="arch" type="xml">
-            <list decoration-success="state == 'done'"
+            <list default_order="id desc"
+                  decoration-success="state == 'done'"
                   decoration-danger="state == 'failed'"
                   decoration-muted="state == 'cancelled'"
                   decoration-info="state == 'running'">
                 <field name="name"/>
                 <field name="type_id"/>
                 <field name="state"/>
+                <field name="progress" widget="gtq_task_progress"/>
                 <field name="channel"/>
                 <field name="priority"/>
-                <field name="progress" widget="progressbar"/>
                 <field name="worker_id"/>
                 <field name="retry_count"/>
                 <field name="create_uid"/>
@@ -77,7 +78,7 @@
                         </group>
                         <group string="Execution">
                             <field name="worker_id"/>
-                            <field name="progress" widget="progressbar"/>
+                            <field name="progress" widget="gtq_task_progress"/>
                             <field name="retry_policy"/>
                             <field name="max_retries"/>
                             <field name="retry_count"/>

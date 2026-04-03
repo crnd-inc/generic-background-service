@@ -180,6 +180,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             return
 
         # Phase 2: execute in the context of the creating user
+        _notify_parent = False
         try:
             with self.with_env() as env:
                 task = env['generic.task.queue.task'].browse(task_id)
@@ -211,8 +212,11 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
 
                 try:
                     task.action_done(result)
-                    # Notify parent if this is a child task
-                    self._notify_parent_on_child_done(env, task)
+                    # Record whether parent notification is needed.
+                    # The actual call happens after this with-block
+                    # commits so on_child_done runs in a fresh
+                    # transaction with no row locks held.
+                    _notify_parent = bool(task.parent_id)
                 except odoo_exceptions.ValidationError:
                     # Task was already transitioned (timed out or
                     # cancelled) by the worker thread — that's OK
@@ -220,6 +224,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         "Task %d already transitioned "
                         "(likely timed out or cancelled)",
                         task_id)
+            # env.cr commits here — child row lock fully released
         except Exception as exc:
             _logger.error(
                 "Task %d failed", task_id, exc_info=True)
@@ -250,6 +255,13 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 _logger.error(
                     "Failed to mark task %d as failed",
                     task_id, exc_info=True)
+
+        # Phase 3: notify parent in a fresh transaction.
+        # Runs AFTER Phase 2 commits so no child row lock is held.
+        # This prevents deadlocks when on_child_done calls
+        # update_progress() (which opens a separate cursor).
+        if _notify_parent:
+            self._notify_parent_on_child_done(task_id)
 
     def _finalize_completed(self):
         """ Remove completed task threads from active list. """
@@ -322,25 +334,30 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             _logger.error(
                 "Error checking waiting parents", exc_info=True)
 
-    def _notify_parent_on_child_done(self, env, child_task):
+    def _notify_parent_on_child_done(self, child_task_id):
         """ Notify parent task that a child has completed.
 
+            Opens its own transaction so it runs with no row locks
+            held from the child's execution phase (deadlock-safe).
             Calls on_child_done hook on the parent's task type.
         """
-        if not child_task.parent_id:
-            return
-        parent = child_task.parent_id
-        if parent.state != 'waiting':
-            return
         try:
-            registry = TaskTypeRegistry()
-            task_type_cls = registry.get_task_type(parent.type_code)
-            task_type = task_type_cls()
-            task_type.on_child_done(env, parent, child_task)
+            with self.with_env() as env:
+                child_task = env['generic.task.queue.task'].browse(
+                    child_task_id)
+                if not child_task.parent_id:
+                    return
+                parent = child_task.parent_id
+                if parent.state != 'waiting':
+                    return
+                registry = TaskTypeRegistry()
+                task_type_cls = registry.get_task_type(parent.type_code)
+                task_type = task_type_cls()
+                task_type.on_child_done(env, parent, child_task)
         except Exception:
             _logger.error(
-                "Error in on_child_done for parent %d",
-                parent.id, exc_info=True)
+                "Error in on_child_done for child task %d",
+                child_task_id, exc_info=True)
 
     def _auto_retry_failed(self):
         """ Automatically retry failed retriable tasks.

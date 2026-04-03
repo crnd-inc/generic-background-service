@@ -31,9 +31,13 @@ RETRY_POLICIES = [
 ]
 
 
+TERMINAL_STATES = frozenset({'done', 'failed', 'cancelled'})
+
+
 class GenericTaskQueueTask(models.Model):
     _name = 'generic.task.queue.task'
     _description = 'Task Queue Task'
+    _inherit = ['bus.listener.mixin']
     _order = 'priority, date_created'
 
     def init(self):
@@ -46,10 +50,31 @@ class GenericTaskQueueTask(models.Model):
             WHERE state = 'pending'
         """)
 
-    name = fields.Char(required=True)
+    def _bus_channel(self):
+        self.ensure_one()
+        return self.create_uid.partner_id
+
+    def _notify_state_change(self):
+        """ Send gtq_task_update notification to the task creator.
+
+            Called after every state transition. Fires via cr.postcommit
+            (handled internally by bus.bus._sendone).
+            Skipped if the creator has no partner (e.g. system users).
+        """
+        for task in self:
+            partner = task.create_uid.partner_id
+            if not partner:
+                continue
+            partner._bus_send('gtq_task_update', {
+                'task_id': task.id,
+                'state': task.state,
+                'progress': task.progress,
+            })
+
+    name = fields.Char(required=True, readonly=True)
     type_id = fields.Many2one(
         'generic.task.queue.task.type',
-        required=True, index=True, ondelete='restrict',
+        required=True, index=True, ondelete='restrict', readonly=True,
         help="Task type that defines how to execute this task.")
     type_code = fields.Char(
         related='type_id.code', store=True, index=True,
@@ -59,14 +84,14 @@ class GenericTaskQueueTask(models.Model):
         TASK_STATES, default='pending',
         required=True, index=True, readonly=True)
     channel = fields.Char(
-        default='default', required=True, index=True,
+        default='default', required=True, index=True, readonly=True,
         help="Routing channel. Workers only pick up tasks "
              "matching their channels.")
     priority = fields.Integer(
-        default=5,
+        default=5, readonly=True,
         help="Lower number = higher priority (0 is highest).")
     task_params = fields.Json(
-        string='Task Parameters', default=dict,
+        string='Task Parameters', default=dict, readonly=True,
         help="JSON input for the task type's execute() method.")
     task_result = fields.Json(
         readonly=True,
@@ -82,15 +107,15 @@ class GenericTaskQueueTask(models.Model):
         'generic.task.queue.worker', readonly=True,
         index=True, ondelete='set null')
     eta = fields.Datetime(
-        string='ETA', index=True,
+        string='ETA', index=True, readonly=True,
         help="Earliest time this task should be executed. "
              "Leave empty for immediate execution.")
     retry_policy = fields.Selection(
-        RETRY_POLICIES, default='retriable', required=True)
-    max_retries = fields.Integer(default=3)
+        RETRY_POLICIES, default='retriable', required=True, readonly=True)
+    max_retries = fields.Integer(default=3, readonly=True)
     retry_count = fields.Integer(default=0, readonly=True)
     timeout = fields.Integer(
-        default=0,
+        default=0, readonly=True,
         help="Maximum execution time in seconds. "
              "0 means no timeout. Worker will mark the task "
              "as failed if execution exceeds this limit.")
@@ -99,6 +124,7 @@ class GenericTaskQueueTask(models.Model):
         help="Execution progress (0-100).")
     parent_id = fields.Many2one(
         'generic.task.queue.task', index=True, ondelete='cascade',
+        readonly=True,
         help="Parent task. Used for splitting work into sub-tasks.")
     child_ids = fields.One2many(
         'generic.task.queue.task', 'parent_id',
@@ -220,6 +246,7 @@ class GenericTaskQueueTask(models.Model):
             'date_started': fields.Datetime.now(),
             'progress': 0,
         })
+        self._notify_state_change()
 
     @api.private
     def action_done(self, result=None):
@@ -234,6 +261,7 @@ class GenericTaskQueueTask(models.Model):
             'date_completed': fields.Datetime.now(),
             'progress': 100,
         })
+        self._notify_state_change()
 
     @api.private
     def action_wait_children(self):
@@ -246,6 +274,7 @@ class GenericTaskQueueTask(models.Model):
         self.write({
             'state': 'waiting',
         })
+        self._notify_state_change()
 
     @api.private
     def action_fail(self, error=None, error_data=None):
@@ -267,6 +296,7 @@ class GenericTaskQueueTask(models.Model):
         if error_data is not None:
             vals['task_error_data'] = error_data
         self.write(vals)
+        self._notify_state_change()
 
     def action_retry(self):
         """ Transition: failed → pending (if retriable).
@@ -293,6 +323,7 @@ class GenericTaskQueueTask(models.Model):
             'task_error': False,
             'progress': 0,
         })
+        self._notify_state_change()
 
     def action_cancel(self):
         """ Transition: pending/assigned/running → cancelled.
@@ -311,6 +342,7 @@ class GenericTaskQueueTask(models.Model):
                 'pending', 'assigned', 'running', 'waiting'))
         if children_to_cancel:
             children_to_cancel.action_cancel()
+        self._notify_state_change()
 
     @api.private
     def _check_waiting_parent(self):
@@ -408,16 +440,32 @@ class GenericTaskQueueTask(models.Model):
             This commits immediately so progress is visible to
             other transactions (e.g., UI polling) without waiting
             for the execute() transaction to complete.
+
+            A gtq_task_progress bus notification is sent on the same
+            cursor so it fires at the same commit, keeping the
+            notification in sync with the data.
         """
         value = max(0, min(100, int(value)))
-        # Use a new cursor to avoid interfering with the
-        # current transaction
         new_cr = self.pool.cursor()
         try:
             new_cr.execute(
                 "UPDATE generic_task_queue_task "
                 "SET progress = %s WHERE id IN %s",
                 (value, tuple(self.ids)))
+            # Collect partner ids via self (original env sees uncommitted
+            # task rows). Then send bus notifications via new_env so they
+            # queue on new_cr's postcommit and fire at the same commit as
+            # the progress UPDATE — res.partner rows are always committed.
+            new_env = api.Environment(new_cr, self.env.uid, {})
+            for task in self:
+                partner = task.create_uid.partner_id
+                if not partner:
+                    continue
+                new_env['res.partner'].browse(partner.id)._bus_send(
+                    'gtq_task_progress', {
+                        'task_id': task.id,
+                        'progress': value,
+                    })
             new_cr.commit()
         finally:
             new_cr.close()
