@@ -28,6 +28,26 @@ DEFAULT_SHUTDOWN_TIMEOUT = 30
 class BackgroundService(abc.ABC):
     """ Background service will spawn 1 background worker of specified class
         for each active database.
+
+        Self-healing design
+        -------------------
+        Services are designed to be crash-free at two levels:
+
+        1. Worker level: ``AbstractBackgroundServiceWorker._run()`` catches
+           every exception raised by ``run_service()`` and immediately loops
+           back — a worker thread never dies on business logic errors.
+           Implement ``on_error()`` for error-specific handling.
+
+        2. Service level: the beat loop calls ``clean_workers()`` followed by
+           ``spawn_workers()`` on every cycle (default every 3 seconds).
+           Per-database workers that exit unexpectedly are detected and
+           respawned automatically on the next beat.
+
+        The only unrecovered failure mode in threaded execution mode is an
+        exception that escapes ``BackgroundService._run()`` itself — a
+        framework-level event indicating a bug in the framework, not in
+        service code.  In worker (prefork) mode Odoo's PreforkServer respawns
+        the entire worker process automatically.
     """
 
     # Name to be used to register service. If not set, then service
