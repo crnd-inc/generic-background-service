@@ -1,4 +1,5 @@
 import abc
+import time
 import threading
 import logging
 import collections
@@ -390,7 +391,6 @@ class BackgroundService(abc.ABC):
         Called from _run() on every beat cycle.
         No-op when _die_on_stuck_timeout == 0.
         """
-        import time
         if not self._die_on_stuck_timeout:
             return
         if self.is_stuck():

@@ -13,4 +13,16 @@
         <field name="perm_unlink" eval="False"/>
     </record>
 
+    <!-- Managers can see and manage all tasks -->
+    <record id="rule_task_queue_task_manager_all" model="ir.rule">
+        <field name="name">Task Queue: all tasks (manager)</field>
+        <field name="model_id" ref="model_generic_task_queue_task"/>
+        <field name="domain_force">[(1, '=', 1)]</field>
+        <field name="groups" eval="[(4, ref('generic_task_queue.group_task_queue_manager'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+    </record>
+
 </odoo>

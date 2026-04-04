@@ -3,7 +3,6 @@
 
     <!-- Task Tree View -->
     <record id="view_generic_task_queue_task_tree" model="ir.ui.view">
-        <field name="name">generic.task.queue.task.tree</field>
         <field name="model">generic.task.queue.task</field>
         <field name="arch" type="xml">
             <list default_order="id desc"
@@ -18,7 +17,8 @@
                 <field name="progress" widget="gtq_task_progress"/>
                 <field name="channel"/>
                 <field name="priority"/>
-                <field name="worker_id"/>
+                <field name="worker_id"
+                       groups="generic_task_queue.group_task_queue_manager"/>
                 <field name="retry_count"/>
                 <field name="create_uid"/>
                 <field name="date_created"/>
@@ -30,7 +30,6 @@
 
     <!-- Task Form View -->
     <record id="view_generic_task_queue_task_form" model="ir.ui.view">
-        <field name="name">generic.task.queue.task.form</field>
         <field name="model">generic.task.queue.task</field>
         <field name="arch" type="xml">
             <form>
@@ -38,11 +37,13 @@
                     <button name="action_cancel"
                             string="Cancel"
                             type="object"
+                            groups="generic_task_queue.group_task_queue_user"
                             invisible="state not in ('pending', 'assigned', 'running', 'stuck', 'waiting')"
                             confirm="Are you sure you want to cancel this task?"/>
                     <button name="action_retry"
                             string="Retry"
                             type="object"
+                            groups="generic_task_queue.group_task_queue_user"
                             invisible="state != 'failed'"
                             class="btn-primary"/>
                     <field name="state" widget="statusbar"
@@ -78,22 +79,26 @@
                                    invisible="not parent_id"/>
                         </group>
                         <group string="Execution">
-                            <field name="worker_id"/>
+                            <field name="worker_id"
+                                   groups="generic_task_queue.group_task_queue_manager"/>
                             <field name="runner_id"
+                                   groups="generic_task_queue.group_task_queue_manager"
                                    invisible="not runner_id"/>
                             <field name="progress" widget="gtq_task_progress"/>
                             <field name="retry_policy"/>
                             <field name="max_retries"/>
                             <field name="retry_count"/>
-                            <field name="create_uid" string="Created by"/>
+                            <field name="create_uid" string="Created by" options="{'no_open': True}"/>
                         </group>
                     </group>
-                    <group string="Parameters">
-                        <field name="task_params" widget="json"/>
+                    <group string="Parameters"
+                               groups="generic_task_queue.group_task_queue_manager">
+                        <field name="task_params"/>
                     </group>
                     <group string="Result"
+                           groups="generic_task_queue.group_task_queue_manager"
                            invisible="state not in ('done', 'failed')">
-                        <field name="task_result" widget="json"
+                        <field name="task_result"
                                invisible="state != 'done'"/>
                         <field name="task_error"
                                invisible="state != 'failed'"/>
@@ -110,7 +115,6 @@
 
     <!-- Task Search View -->
     <record id="view_generic_task_queue_task_search" model="ir.ui.view">
-        <field name="name">generic.task.queue.task.search</field>
         <field name="model">generic.task.queue.task</field>
         <field name="arch" type="xml">
             <search>
@@ -136,17 +140,28 @@
                     <filter name="group_type" string="Type"
                             context="{'group_by': 'type_id'}"/>
                     <filter name="group_worker" string="Worker"
-                            context="{'group_by': 'worker_id'}"/>
+                            context="{'group_by': 'worker_id'}"
+                            groups="generic_task_queue.group_task_queue_manager"/>
                 </group>
             </search>
         </field>
     </record>
 
-    <!-- Task Action -->
+    <!-- Task Action (all tasks — managers only) -->
     <record id="action_generic_task_queue_task" model="ir.actions.act_window">
         <field name="name">Task Queue</field>
         <field name="res_model">generic.task.queue.task</field>
         <field name="view_mode">list,form</field>
+        <field name="search_view_id"
+               ref="view_generic_task_queue_task_search"/>
+    </record>
+
+    <!-- My Tasks Action (own tasks — task queue users) -->
+    <record id="action_generic_task_queue_my_tasks" model="ir.actions.act_window">
+        <field name="name">My Tasks</field>
+        <field name="res_model">generic.task.queue.task</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('create_uid', '=', uid)]</field>
         <field name="search_view_id"
                ref="view_generic_task_queue_task_search"/>
     </record>
@@ -203,21 +218,31 @@
     <!-- Menu -->
     <menuitem id="menu_task_queue_root"
               name="Task Queue"
+              groups="generic_task_queue.group_task_queue_user"
               sequence="90"/>
+    <menuitem id="menu_task_queue_my_tasks"
+              name="My Tasks"
+              parent="menu_task_queue_root"
+              action="action_generic_task_queue_my_tasks"
+              groups="generic_task_queue.group_task_queue_user"
+              sequence="5"/>
     <menuitem id="menu_task_queue_tasks"
               name="Tasks"
               parent="menu_task_queue_root"
               action="action_generic_task_queue_task"
+              groups="generic_task_queue.group_task_queue_manager"
               sequence="10"/>
     <menuitem id="menu_task_queue_task_types"
               name="Task Types"
               parent="menu_task_queue_root"
               action="action_generic_task_queue_task_type"
+              groups="generic_task_queue.group_task_queue_manager"
               sequence="15"/>
     <menuitem id="menu_task_queue_workers"
               name="Workers"
               parent="menu_task_queue_root"
               action="action_generic_task_queue_worker"
+              groups="generic_task_queue.group_task_queue_manager"
               sequence="20"/>
 
 </odoo>
