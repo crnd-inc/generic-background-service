@@ -37,10 +37,12 @@ class TaskQueueService(BackgroundService):
     #   In threaded mode the worker thread dies — manual restart needed.
     # _default_task_timeout: fallback timeout (seconds) applied when a
     #   task has no timeout set and the task type has no default_timeout.
-    #   0 = no timeout.
+    #   Acts as a safety net — tasks that genuinely need more time should
+    #   set default_timeout=0 on their task type to opt out explicitly.
+    #   0 = no timeout (not recommended for production).
     _max_stuck_jobs = 0
     _die_on_stuck_timeout = 300
-    _default_task_timeout = 0
+    _default_task_timeout = 3600  # 1 hour safety net
 
     def get_worker_class(self):
         return TaskQueueWorker

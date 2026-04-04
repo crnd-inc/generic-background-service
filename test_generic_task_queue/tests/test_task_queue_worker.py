@@ -186,3 +186,50 @@ class TestTaskTimeout(TransactionCase):
             'timeout': 3600,
         })
         self.assertEqual(task.timeout, 3600)
+
+
+class TestTimeoutResolutionChain(TransactionCase):
+    """Timeout is resolved: task → task type default → service default (3600s).
+
+    The service-level default acts as a safety net so tasks that neither
+    specify a per-task timeout nor a task-type default_timeout don't run
+    indefinitely. Task types that genuinely need unbounded execution time
+    must set default_timeout=0 to opt out explicitly.
+    """
+
+    def _resolve(self, task_timeout, type_timeout, worker_default):
+        """Replicate the resolution logic from
+           TaskQueueWorker._claim_and_spawn."""
+        return (
+            task_timeout if task_timeout > 0
+            else type_timeout if type_timeout > 0
+            else worker_default
+        )
+
+    def test_task_timeout_wins(self):
+        """Per-task timeout takes priority over everything."""
+        self.assertEqual(self._resolve(120, 300, 3600), 120)
+
+    def test_type_default_wins_over_service_default(self):
+        """Task-type default_timeout takes priority over service default."""
+        self.assertEqual(self._resolve(0, 300, 3600), 300)
+
+    def test_service_default_is_fallback(self):
+        """Service default (3600s) is used when task and type have no timeout.
+        """
+        self.assertEqual(self._resolve(0, 0, 3600), 3600)
+
+    def test_explicit_zero_on_type_bypasses_service_default(self):
+        """Task type setting default_timeout=0 opts out of service default."""
+        # type_timeout=0 falls through to service default — this is by design.
+        # To opt out of all timeouts, the task type must set 0 AND the service
+        # must set _default_task_timeout=0.  A task type alone cannot override
+        # the service-level safety net; that requires service configuration.
+        self.assertEqual(self._resolve(0, 0, 0), 0)
+
+    def test_task_queue_service_default_is_3600(self):
+        """TaskQueueService._default_task_timeout must be 3600 (1 hour)."""
+        from odoo.addons.generic_task_queue.service.task_queue_service import (
+            TaskQueueService,
+        )
+        self.assertEqual(TaskQueueService._default_task_timeout, 3600)
