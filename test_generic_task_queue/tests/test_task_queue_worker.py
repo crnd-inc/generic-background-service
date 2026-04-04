@@ -55,7 +55,7 @@ class TestWorkerModel(TransactionCase):
         w = Worker.create({
             'uuid': 'hb-test',
             'service_name': 'test.svc',
-            'state': 'stale',
+            'state': 'stuck',
         })
         w.heartbeat()
         self.assertEqual(w.state, 'active')

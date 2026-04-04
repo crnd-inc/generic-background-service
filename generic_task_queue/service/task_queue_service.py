@@ -27,6 +27,21 @@ class TaskQueueService(BackgroundService):
     _channels = ['default']
     _max_parallel_jobs = 1
 
+    # Stuck task handling
+    # -------------------
+    # _max_stuck_jobs: number of simultaneously stuck threads that
+    #   triggers the die-on-stuck countdown. 0 = feature disabled.
+    # _die_on_stuck_timeout: seconds the stuck count must remain at or
+    #   above _max_stuck_jobs before the worker stops itself.
+    #   In worker mode (prefork) the process dies and Odoo respawns it.
+    #   In threaded mode the worker thread dies — manual restart needed.
+    # _default_task_timeout: fallback timeout (seconds) applied when a
+    #   task has no timeout set and the task type has no default_timeout.
+    #   0 = no timeout.
+    _max_stuck_jobs = 0
+    _die_on_stuck_timeout = 300
+    _default_task_timeout = 0
+
     def get_worker_class(self):
         return TaskQueueWorker
 
@@ -35,4 +50,7 @@ class TaskQueueService(BackgroundService):
             'task_types': self._task_types,  # empty = all types
             'channels': self._channels,
             'max_parallel_jobs': self._max_parallel_jobs,
+            'max_stuck_jobs': self._max_stuck_jobs,
+            'die_on_stuck_timeout': self._die_on_stuck_timeout,
+            'default_task_timeout': self._default_task_timeout,
         }

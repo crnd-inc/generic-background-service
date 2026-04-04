@@ -8,4 +8,5 @@ from . import (  # noqa: F401
     test_security,
     test_parent_child,
     test_worker_integration,
+    test_stuck_tasks,
 )

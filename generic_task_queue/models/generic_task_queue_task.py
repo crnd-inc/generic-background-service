@@ -1,4 +1,5 @@
 import logging
+import uuid as _uuid_module
 from datetime import timedelta
 
 from odoo import models, fields, api, exceptions
@@ -9,6 +10,7 @@ TASK_STATES = [
     ('pending', 'Pending'),
     ('assigned', 'Assigned'),
     ('running', 'Running'),
+    ('stuck', 'Stuck'),
     ('waiting', 'Waiting for children'),
     ('done', 'Done'),
     ('failed', 'Failed'),
@@ -17,12 +19,13 @@ TASK_STATES = [
 
 # Allowed state transitions: {from_state: [to_states]}
 ALLOWED_TRANSITIONS = {
-    'pending': ['assigned', 'cancelled'],
-    'assigned': ['running', 'cancelled'],
-    'running': ['done', 'failed', 'waiting', 'cancelled'],
-    'waiting': ['done', 'failed', 'cancelled'],
-    'failed': ['pending', 'cancelled'],
-    'done': [],
+    'pending':   ['assigned', 'cancelled'],
+    'assigned':  ['running', 'cancelled'],
+    'running':   ['done', 'failed', 'waiting', 'stuck', 'cancelled'],
+    'stuck':     ['done', 'failed', 'pending', 'cancelled'],
+    'waiting':   ['done', 'failed', 'cancelled'],
+    'failed':    ['pending', 'cancelled'],
+    'done':      [],
     'cancelled': [],
 }
 
@@ -33,6 +36,10 @@ RETRY_POLICIES = [
 
 
 TERMINAL_STATES = frozenset({'done', 'failed', 'cancelled'})
+
+# States where a task is considered still active (not yet resolved)
+ACTIVE_STATES = frozenset({
+    'pending', 'assigned', 'running', 'stuck', 'waiting'})
 
 
 class GenericTaskQueueTask(models.Model):
@@ -107,6 +114,13 @@ class GenericTaskQueueTask(models.Model):
     worker_id = fields.Many2one(
         'generic.task.queue.worker', readonly=True,
         index=True, ondelete='set null')
+    runner_id = fields.Char(
+        readonly=True,
+        help="UUID generated at claim time. Identifies the specific "
+             "execution attempt. A task thread checks this before writing "
+             "final state — if it no longer matches, the task was "
+             "reassigned and the write is silently dropped (zombie-thread "
+             "guard). Cleared when a task returns to pending.")
     eta = fields.Datetime(
         string='ETA', index=True, readonly=True,
         help="Earliest time this task should be executed. "
@@ -250,11 +264,36 @@ class GenericTaskQueueTask(models.Model):
         self._notify_state_change()
 
     @api.private
-    def action_done(self, result=None):
-        """ Transition: running → done.
+    def action_stuck(self):
+        """ Transition: running → stuck.
+
+            Called by the worker when a task's timeout expires but its
+            thread is still alive. Does NOT increment retry_count because
+            the outcome of the thread is still unknown.
+        """
+        self._check_transition('stuck')
+        self.write({'state': 'stuck'})
+        self._notify_state_change()
+
+    @api.private
+    def action_done(self, result=None, runner_id=None):
+        """ Transition: running/stuck → done.
 
             Called by worker (SUPERUSER context). No sudo needed.
+
+            :param runner_id: If provided, the call is silently dropped
+                when the task's current runner_id does not match.
+                Prevents zombie threads from overwriting a task that
+                has been reassigned to a new execution attempt.
         """
+        if runner_id is not None:
+            self.ensure_one()
+            self.invalidate_recordset(['runner_id'])
+            if self.runner_id != runner_id:
+                _logger.info(
+                    "Task %d: runner_id mismatch, dropping action_done "
+                    "(zombie thread guard)", self.id)
+                return
         self._check_transition('done')
         self.write({
             'state': 'done',
@@ -278,15 +317,25 @@ class GenericTaskQueueTask(models.Model):
         self._notify_state_change()
 
     @api.private
-    def action_fail(self, error=None, error_data=None):
-        """ Transition: running/waiting → failed.
+    def action_fail(self, error=None, error_data=None, runner_id=None):
+        """ Transition: running/stuck/waiting → failed.
 
             Called by worker (SUPERUSER context). No sudo needed.
 
             :param str error: error message / traceback text
             :param dict error_data: structured error data (JSON)
+            :param runner_id: If provided, the call is silently dropped
+                when the task's current runner_id does not match.
+                Prevents zombie threads from overwriting a reassigned task.
         """
         self.ensure_one()
+        if runner_id is not None:
+            self.invalidate_recordset(['runner_id'])
+            if self.runner_id != runner_id:
+                _logger.info(
+                    "Task %d: runner_id mismatch, dropping action_fail "
+                    "(zombie thread guard)", self.id)
+                return
         self._check_transition('failed')
         vals = {
             'state': 'failed',
@@ -340,7 +389,7 @@ class GenericTaskQueueTask(models.Model):
         # Cancel non-terminal children
         children_to_cancel = self.mapped('child_ids').filtered(
             lambda c: c.state in (
-                'pending', 'assigned', 'running', 'waiting'))
+                'pending', 'assigned', 'running', 'stuck', 'waiting'))
         if children_to_cancel:
             children_to_cancel.action_cancel()
         self._notify_state_change()
@@ -387,8 +436,9 @@ class GenericTaskQueueTask(models.Model):
 
         child_states = set(children.mapped('state'))
 
-        # If any child is still in progress, keep waiting
-        active_states = {'pending', 'assigned', 'running', 'waiting'}
+        # If any child is still in progress, keep waiting.
+        # 'stuck' children are still potentially in progress.
+        active_states = {'pending', 'assigned', 'running', 'stuck', 'waiting'}
         if child_states & active_states:
             return
 
@@ -563,6 +613,10 @@ class GenericTaskQueueTask(models.Model):
         if task_ids:
             tasks = self.browse(task_ids)
             tasks.action_assign(worker)
+            # Assign a fresh runner_id to each task so the executing
+            # thread can detect reassignment (zombie-thread guard).
+            for task in tasks:
+                task.write({'runner_id': str(_uuid_module.uuid4())})
             return tasks
         return self.browse()
 

@@ -20,13 +20,16 @@ STALE_CHECK_INTERVAL = 60
 class _TaskThread:
     """ Tracks a running task thread.
     """
-    __slots__ = ('task_id', 'thread', 'start_time', 'timeout')
+    __slots__ = ('task_id', 'thread', 'start_time', 'timeout',
+                 'timed_out', 'runner_id')
 
-    def __init__(self, task_id, thread, timeout=0):
+    def __init__(self, task_id, thread, timeout=0, runner_id=None):
         self.task_id = task_id
         self.thread = thread
         self.start_time = time.monotonic()
         self.timeout = timeout
+        self.timed_out = False      # Set True after timeout fires
+        self.runner_id = runner_id  # Captured at claim time
 
 
 class TaskQueueWorker(AbstractBackgroundServiceWorker):
@@ -42,6 +45,18 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         Task execution happens in _TaskThread threads,
         not in the worker's own thread. This ensures the
         worker can always heartbeat and respond to stop signals.
+
+        Stuck task handling
+        -------------------
+        When a task thread exceeds its timeout but is still alive,
+        the task is marked 'stuck'. Stuck threads continue to occupy
+        their parallel slot. If the number of stuck threads reaches
+        _max_stuck_jobs and they remain stuck for _die_on_stuck_timeout
+        seconds, the worker calls worker_stop():
+          - Worker mode (prefork): process dies, Odoo respawns it.
+            Self-healing.
+          - Threaded mode: worker thread dies, no restart occurs.
+            Requires manual server restart.
     """
 
     def __init__(self, *args, **kwargs):
@@ -53,6 +68,12 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             'task_types', [])
         self._max_parallel_jobs = self._worker_params.get(
             'max_parallel_jobs', 1)
+        self._max_stuck_jobs = self._worker_params.get(
+            'max_stuck_jobs', 0)
+        self._die_on_stuck_timeout = self._worker_params.get(
+            'die_on_stuck_timeout', 300)
+        self._default_task_timeout = self._worker_params.get(
+            'default_task_timeout', 0)
 
         # Active task threads: list of _TaskThread
         self._active_tasks = []
@@ -62,6 +83,10 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
 
         # Timestamp of last stale-worker check
         self._last_stale_check = 0
+
+        # Monotonic timestamp when stuck count first reached threshold.
+        # None if not currently at threshold.
+        self._all_slots_stuck_since = None
 
     def get_sleep_timeout(self):
         if self._active_tasks:
@@ -81,22 +106,42 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 max_parallel_jobs=self._max_parallel_jobs,
             )
             self._worker_record_id = worker_rec.id
+        # Cleanup orphaned tasks in a separate transaction so it
+        # commits independently of find_or_create.
+        self._cleanup_orphaned_tasks(self._worker_record_id)
 
     def on_shutdown(self):
-        # Wait for running task threads to finish
+        # Wait briefly for task threads to finish cleanly.
+        # Threads that complete in time will have already written their
+        # own final state (done/failed) — nothing more to do for them.
         self._wait_for_task_threads(timeout=10)
 
-        # Mark worker as dead, reassign stuck tasks
-        try:
-            with self.with_env() as env:
-                worker = env['generic.task.queue.worker'].browse(
-                    self._worker_record_id)
-                if worker.exists():
-                    worker.mark_dead()
-        except Exception:
-            _logger.error(
-                "Error marking worker %s as dead",
-                self._worker_uuid, exc_info=True)
+        # Do NOT call mark_dead() here.
+        #
+        # Any thread still alive after the wait (running or stuck) has
+        # already started executing business logic — reassigning its task
+        # now would cause two threads to run the same task concurrently,
+        # potentially deadlocking on DB row locks or duplicate external
+        # API calls. The runner_id guard only prevents the final state
+        # write from being duplicated; it cannot stop the concurrent work.
+        #
+        # Task reassignment is handled safely by two other paths:
+        #
+        #   1. Next startup (worker mode / clean respawn):
+        #      find_or_create() reuses this worker record, then
+        #      _cleanup_orphaned_tasks() reassigns assigned/running/stuck
+        #      tasks. By this point the old process — and all its threads —
+        #      are dead. Safe.
+        #
+        #   2. Stale detection (unclean death — SIGKILL, OOM):
+        #      Heartbeat stops. After DEFAULT_HEARTBEAT_TIMEOUT (60s) a
+        #      peer calls check_stale_workers() → mark_dead(). By then
+        #      the process has been dead long enough for all threads to be
+        #      gone. Safe.
+        _logger.info(
+            "Worker %s shut down. In-flight tasks will be reassigned "
+            "on next startup or by stale detection.",
+            self._worker_uuid)
 
     def run_service(self):
         # 1. Heartbeat
@@ -105,19 +150,22 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         # 2. Finalize completed task threads
         self._finalize_completed()
 
-        # 3. Check for timed-out task threads
+        # 3. Check for timed-out task threads → mark stuck
         self._check_timeouts()
 
-        # 4. Check waiting parents
+        # 4. Check stuck threshold / trigger die-on-stuck countdown
+        self._check_stuck_threshold()
+
+        # 5. Check waiting parents
         self._check_waiting_parents()
 
-        # 5. Auto-retry failed retriable tasks
+        # 6. Auto-retry failed retriable tasks
         self._auto_retry_failed()
 
-        # 6. Periodically check for stale peer workers
+        # 7. Periodically check for stale peer workers
         self._check_stale_peers()
 
-        # 7. Claim and spawn new tasks if free slots
+        # 8. Claim and spawn new tasks if free slots
         free_slots = self._max_parallel_jobs - len(self._active_tasks)
         if free_slots > 0:
             self._claim_and_spawn(free_slots)
@@ -134,7 +182,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 self._worker_uuid, exc_info=True)
 
     def _claim_and_spawn(self, limit):
-        task_ids = []
+        task_data = []
         try:
             with self.with_env() as env:
                 worker = env['generic.task.queue.worker'].browse(
@@ -143,31 +191,39 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 tasks = Task.claim_task(
                     worker, self._channels, self._task_types,
                     limit=limit)
-                # Read task data before leaving the transaction
-                task_ids = [
-                    (t.id, t.timeout) for t in tasks
-                ]
+                # Read all task data before leaving the transaction.
+                # Resolve timeout here: task → type default → worker default.
+                for t in tasks:
+                    task_timeout = t.timeout or 0
+                    type_timeout = (t.type_id.default_timeout or 0
+                                    if t.type_id else 0)
+                    resolved_timeout = (
+                        task_timeout if task_timeout > 0
+                        else type_timeout if type_timeout > 0
+                        else self._default_task_timeout
+                    )
+                    task_data.append((t.id, resolved_timeout, t.runner_id))
         except Exception:
             _logger.error(
                 "Error claiming tasks for worker %s",
                 self._worker_uuid, exc_info=True)
             return
 
-        for task_id, timeout in task_ids:
-            self._spawn_task_thread(task_id, timeout)
+        for task_id, timeout, runner_id in task_data:
+            self._spawn_task_thread(task_id, timeout, runner_id)
 
-    def _spawn_task_thread(self, task_id, timeout=0):
+    def _spawn_task_thread(self, task_id, timeout=0, runner_id=None):
         thread = threading.Thread(
             target=self._task_thread_target,
-            args=(task_id,),
+            args=(task_id, runner_id),
             name="TaskExec-%s-%d" % (self._worker_uuid[:8], task_id),
             daemon=True,
         )
-        task_info = _TaskThread(task_id, thread, timeout)
+        task_info = _TaskThread(task_id, thread, timeout, runner_id)
         self._active_tasks.append(task_info)
         thread.start()
 
-    def _task_thread_target(self, task_id):
+    def _task_thread_target(self, task_id, runner_id=None):
         """ Runs in a separate thread. Executes one task. """
         # Phase 1: mark as running
         try:
@@ -211,18 +267,18 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         task_id, exc_info=True)
 
                 try:
-                    task.action_done(result)
+                    task.action_done(result, runner_id=runner_id)
                     # Record whether parent notification is needed.
                     # The actual call happens after this with-block
                     # commits so on_child_done runs in a fresh
                     # transaction with no row locks held.
                     _notify_parent = bool(task.parent_id)
                 except odoo_exceptions.ValidationError:
-                    # Task was already transitioned (timed out or
-                    # cancelled) by the worker thread — that's OK
+                    # Task was already transitioned (timed out/stuck or
+                    # cancelled) by the worker — that's OK.
                     _logger.info(
                         "Task %d already transitioned "
-                        "(likely timed out or cancelled)",
+                        "(likely timed out/stuck or cancelled)",
                         task_id)
             # env.cr commits here — child row lock fully released
         except Exception as exc:
@@ -245,11 +301,12 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             task_id, exc_info=True)
 
                     try:
-                        task.action_fail(traceback.format_exc())
+                        task.action_fail(
+                            traceback.format_exc(), runner_id=runner_id)
                     except odoo_exceptions.ValidationError:
                         _logger.info(
                             "Task %d already transitioned "
-                            "(likely timed out or cancelled)",
+                            "(likely timed out/stuck or cancelled)",
                             task_id)
             except Exception:
                 _logger.error(
@@ -264,17 +321,85 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             self._notify_parent_on_child_done(task_id)
 
     def _finalize_completed(self):
-        """ Remove completed task threads from active list. """
+        """ Remove completed task threads from active list.
+
+            For threads that timed out and are now done, verify the task
+            was properly finalized. If it is still 'stuck' (the thread
+            exited without calling action_done/action_fail), apply retry
+            policy so the task does not stay in permanent limbo.
+        """
         still_active = []
+        resolved_stuck = []
         for task_info in self._active_tasks:
             if task_info.thread.is_alive():
                 still_active.append(task_info)
+            elif task_info.timed_out:
+                resolved_stuck.append(task_info)
         self._active_tasks = still_active
+        if resolved_stuck:
+            self._handle_resolved_stuck_threads(resolved_stuck)
+
+    def _handle_resolved_stuck_threads(self, resolved_stuck):
+        """ For timed-out threads that are now finished, check whether
+            their task is still 'stuck'. If so, the thread exited without
+            writing a final state — apply retry policy to prevent the task
+            from staying in permanent limbo.
+
+            This is a safety net for the uncommon case where a task thread
+            terminates without calling action_done() or action_fail().
+        """
+        for task_info in resolved_stuck:
+            try:
+                with self.with_env() as env:
+                    task = env['generic.task.queue.task'].browse(
+                        task_info.task_id)
+                    task.invalidate_recordset(['state', 'runner_id'])
+                    if task.state != 'stuck':
+                        # Thread wrote its own final state — nothing to do
+                        continue
+                    if task.runner_id != task_info.runner_id:
+                        # Task was reassigned while stuck — zombie guard
+                        # already handles it
+                        continue
+                    _logger.warning(
+                        "Task %d stuck thread resolved without writing "
+                        "final state; applying retry policy "
+                        "(retry_policy=%s, retry_count=%d)",
+                        task_info.task_id,
+                        task.retry_policy, task.retry_count)
+                    if task.retry_policy == 'retriable':
+                        task.write({
+                            'state': 'pending',
+                            'worker_id': False,
+                            'runner_id': False,
+                            'task_error': False,
+                            'progress': 0,
+                        })
+                    else:
+                        task.write({
+                            'state': 'failed',
+                            'task_error': (
+                                'Task thread exited without result '
+                                'after timeout'),
+                            'retry_count': task.retry_count + 1,
+                        })
+            except Exception:
+                _logger.error(
+                    "Error finalizing resolved stuck thread "
+                    "for task %d",
+                    task_info.task_id, exc_info=True)
 
     def _check_timeouts(self):
-        """ Check for task threads that exceeded their timeout. """
+        """ Check for task threads that exceeded their timeout.
+
+            If a thread is still alive after timeout: mark task stuck.
+            If a thread has already finished: nothing to do (the thread
+            called action_done/fail itself).
+        """
         now = time.monotonic()
         for task_info in self._active_tasks:
+            if task_info.timed_out:
+                continue   # Already processed — don't re-check
             if task_info.timeout <= 0:
                 continue
             elapsed = now - task_info.start_time
@@ -286,47 +411,175 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 self._timeout_task(task_info)
 
     def _timeout_task(self, task_info):
-        """ Mark a timed-out task as failed.
+        """ Handle a task thread that exceeded its timeout.
 
-            Re-reads state from DB to handle the race where
-            the task thread completed between the timeout check
-            and this method.
+            If thread is still alive: mark task 'stuck' (outcome unknown).
+            If thread already finished: nothing to do (it handled itself).
+            Always sets task_info.timed_out = True to prevent re-processing.
         """
         try:
             with self.with_env() as env:
                 task = env['generic.task.queue.task'].browse(
                     task_info.task_id)
-                # Re-read from DB to see if task thread
-                # already finished
-                task.invalidate_recordset()
-                if task.state == 'running':
-                    try:
-                        task.action_fail(
-                            "Execution timed out after %d seconds"
-                            % task_info.timeout)
-                    except odoo_exceptions.ValidationError:
-                        # Task thread finished between our read
-                        # and write — that's OK
-                        _logger.debug(
-                            "Task %d already transitioned "
-                            "(race with timeout)",
-                            task_info.task_id)
+                task.invalidate_recordset(['state'])
+                if task_info.thread.is_alive():
+                    if task.state == 'running':
+                        try:
+                            task.action_stuck()
+                        except odoo_exceptions.ValidationError:
+                            # Thread completed between our read and write
+                            _logger.debug(
+                                "Task %d already transitioned "
+                                "(race with timeout)",
+                                task_info.task_id)
+                # If thread is NOT alive, it already called
+                # action_done/action_fail — nothing to do here.
         except Exception:
             _logger.error(
-                "Error marking task %d as timed out",
+                "Error handling timeout for task %d",
                 task_info.task_id, exc_info=True)
-        # Mark timeout so we don't re-check
-        task_info.timeout = 0
+        # Always mark timed_out so _check_timeouts doesn't re-enter
+        task_info.timed_out = True
+
+    def _check_stuck_threshold(self):
+        """ Check if stuck threads have reached _max_stuck_jobs.
+
+            When the stuck count stays at or above _max_stuck_jobs for
+            _die_on_stuck_timeout seconds continuously, the worker calls
+            worker_stop():
+              - Worker mode (prefork): process dies, Odoo respawns it.
+              - Threaded mode: worker thread dies permanently (manual
+                server restart required).
+
+            The countdown resets whenever the stuck count drops below
+            the threshold (e.g. a zombie thread resolves).
+        """
+        if self._max_stuck_jobs <= 0:
+            return
+
+        stuck_count = sum(
+            1 for t in self._active_tasks
+            if t.timed_out and t.thread.is_alive()
+        )
+
+        if stuck_count < self._max_stuck_jobs:
+            # Below threshold — reset countdown
+            if self._all_slots_stuck_since is not None:
+                _logger.info(
+                    "Worker %s: stuck count dropped to %d "
+                    "(< max_stuck_jobs=%d), resetting countdown",
+                    self._worker_uuid, stuck_count, self._max_stuck_jobs)
+                self._all_slots_stuck_since = None
+            return
+
+        now = time.monotonic()
+        if self._all_slots_stuck_since is None:
+            self._all_slots_stuck_since = now
+            _logger.warning(
+                "Worker %s: %d stuck threads reached "
+                "max_stuck_jobs=%d, starting die-on-stuck "
+                "countdown (%ds)",
+                self._worker_uuid, stuck_count,
+                self._max_stuck_jobs, self._die_on_stuck_timeout)
+            self._update_worker_state_stuck()
+            return
+
+        elapsed = now - self._all_slots_stuck_since
+        if elapsed >= self._die_on_stuck_timeout:
+            _logger.error(
+                "Worker %s: %d slot(s) stuck for %.0fs "
+                "(>= die_on_stuck_timeout=%ds). Stopping worker.",
+                self._worker_uuid, stuck_count,
+                elapsed, self._die_on_stuck_timeout)
+            self.worker_stop()
+
+    def _update_worker_state_stuck(self):
+        """ Set worker DB record to 'stuck' for observability. """
+        try:
+            with self.with_env() as env:
+                worker = env['generic.task.queue.worker'].browse(
+                    self._worker_record_id)
+                if worker.exists():
+                    worker.mark_stuck()
+        except Exception:
+            _logger.error(
+                "Error marking worker %s as stuck in DB",
+                self._worker_uuid, exc_info=True)
+
+    def _cleanup_orphaned_tasks(self, worker_record_id):
+        """ On startup, any task owned by this worker record that is
+            still in an active state is orphaned (previous crash with
+            no clean shutdown). Apply retry policy immediately, before
+            claiming any new tasks.
+
+            In worker mode this covers the case where the process was
+            killed (SIGKILL, OOM) without on_shutdown() running.
+
+            'waiting' tasks: the parent task was waiting for children when
+            the worker died. We only clear worker_id so _check_waiting_parents
+            can re-evaluate on the first poll cycle. We do NOT re-execute the
+            task from scratch — children already ran and their state is stable.
+        """
+        try:
+            with self.with_env() as env:
+                Task = env['generic.task.queue.task']
+                orphans = Task.search([
+                    ('worker_id', '=', worker_record_id),
+                    ('state', 'in', (
+                        'assigned', 'running', 'stuck', 'waiting')),
+                ])
+                if not orphans:
+                    return
+                _logger.warning(
+                    "Worker startup: found %d orphaned task(s) "
+                    "from previous run, applying retry policy",
+                    len(orphans))
+                for task in orphans:
+                    _logger.warning(
+                        "  Orphaned task %d (state=%s, "
+                        "retry_policy=%s)",
+                        task.id, task.state, task.retry_policy)
+                    if task.state == 'waiting':
+                        # Don't re-execute — just un-own so any worker
+                        # can re-check whether children are done.
+                        task.write({'worker_id': False})
+                    elif task.retry_policy == 'retriable':
+                        task.write({
+                            'state': 'pending',
+                            'worker_id': False,
+                            'runner_id': False,
+                            'task_error': False,
+                            'progress': 0,
+                        })
+                    else:
+                        task.write({
+                            'state': 'failed',
+                            'task_error': (
+                                'Worker restarted during execution '
+                                '(previous run was lost)'),
+                            'retry_count': task.retry_count + 1,
+                        })
+        except Exception:
+            _logger.error(
+                "Error cleaning orphaned tasks on startup "
+                "for worker_record_id=%d",
+                worker_record_id, exc_info=True)
 
     def _check_waiting_parents(self):
         """ Check waiting parent tasks and complete them
-            if all children are done. """
+            if all children are done.
+
+            Intentionally does NOT filter by worker_id: a task can enter
+            'waiting' state on one worker and need to be completed after
+            that worker restarts or after orphan cleanup clears worker_id.
+            Concurrency is handled inside _check_waiting_parent() via
+            SELECT FOR UPDATE SKIP LOCKED.
+        """
         try:
             with self.with_env() as env:
                 Task = env['generic.task.queue.task']
                 waiting = Task.search([
                     ('state', '=', 'waiting'),
-                    ('worker_id.id', '=', self._worker_record_id),
                 ], limit=10)
                 for task in waiting:
                     task._check_waiting_parent()
@@ -364,6 +617,11 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
 
             Uses FOR UPDATE SKIP LOCKED to prevent multiple
             workers from retrying the same tasks simultaneously.
+
+            NOTE: 'stuck' state is intentionally excluded. Stuck tasks
+            are retried only after the worker restarts and mark_dead()
+            transitions them to 'failed'. This prevents two threads
+            executing the same stuck task simultaneously.
         """
         if not self._channels:
             return

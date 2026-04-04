@@ -21,7 +21,7 @@ class GenericTaskQueueWorker(models.Model):
     dbname = fields.Char(index=True)
     state = fields.Selection([
         ('active', 'Active'),
-        ('stale', 'Stale'),
+        ('stuck', 'Stuck'),
         ('dead', 'Dead'),
     ], default='active', required=True, index=True)
     last_heartbeat = fields.Datetime()
@@ -46,7 +46,7 @@ class GenericTaskQueueWorker(models.Model):
 
     @api.private
     def heartbeat(self):
-        """Update heartbeat timestamp. Reactivate if stale."""
+        """Update heartbeat timestamp. Reactivate if stuck."""
         self.write({
             'last_heartbeat': fields.Datetime.now(),
             'state': 'active',
@@ -54,24 +54,43 @@ class GenericTaskQueueWorker(models.Model):
 
     @api.private
     def mark_dead(self):
-        """Mark worker as dead and reassign its retriable tasks."""
+        """Mark worker as dead and reassign its in-flight tasks.
+
+        Handles tasks in assigned, running, and stuck states.
+        For stuck tasks (timeout expired, thread was still alive),
+        retry_count is incremented because an execution was attempted.
+        runner_id is cleared on pending tasks to invalidate any zombie
+        threads still holding the old runner_id.
+        """
         self.write({'state': 'dead'})
         Task = self.env['generic.task.queue.task']
-        stuck_tasks = Task.search([
+        orphaned = Task.search([
             ('worker_id', 'in', self.ids),
-            ('state', 'in', ('assigned', 'running')),
+            ('state', 'in', ('assigned', 'running', 'stuck')),
         ])
-        for task in stuck_tasks:
+        for task in orphaned:
             if task.retry_policy == 'retriable':
                 task.write({
                     'state': 'pending',
                     'worker_id': False,
+                    'runner_id': False,
                 })
             else:
                 task.write({
                     'state': 'failed',
                     'task_error': 'Worker died during execution',
+                    'retry_count': task.retry_count + 1,
                 })
+
+    @api.private
+    def mark_stuck(self):
+        """Mark worker as stuck (all slots occupied by timed-out threads).
+
+        The worker continues heartbeating but is making no progress.
+        In worker mode this is a transient state before self-restart.
+        In threaded mode it signals that manual intervention is required.
+        """
+        self.write({'state': 'stuck'})
 
     @api.private
     @api.model
@@ -113,6 +132,10 @@ class GenericTaskQueueWorker(models.Model):
         from processing the same stale peer simultaneously.
 
         Called periodically by active workers to detect dead peers.
+
+        Both 'active' and 'stuck' workers are checked: a stuck worker
+        may have entered the stuck state and then died (SIGKILL, OOM)
+        without ever reactivating — its tasks must still be reassigned.
         """
         if heartbeat_timeout is None:
             heartbeat_timeout = DEFAULT_HEARTBEAT_TIMEOUT
@@ -120,7 +143,7 @@ class GenericTaskQueueWorker(models.Model):
             seconds=heartbeat_timeout)
         self.env.cr.execute("""
             SELECT id FROM generic_task_queue_worker
-            WHERE state = 'active'
+            WHERE state IN ('active', 'stuck')
               AND last_heartbeat < %s
             FOR UPDATE SKIP LOCKED
         """, (threshold,))

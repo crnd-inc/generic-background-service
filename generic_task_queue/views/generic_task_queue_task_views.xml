@@ -10,7 +10,8 @@
                   decoration-success="state == 'done'"
                   decoration-danger="state == 'failed'"
                   decoration-muted="state == 'cancelled'"
-                  decoration-info="state == 'running'">
+                  decoration-info="state == 'running'"
+                  decoration-warning="state == 'stuck'">
                 <field name="name"/>
                 <field name="type_id"/>
                 <field name="state"/>
@@ -37,7 +38,7 @@
                     <button name="action_cancel"
                             string="Cancel"
                             type="object"
-                            invisible="state not in ('pending', 'assigned', 'running', 'waiting')"
+                            invisible="state not in ('pending', 'assigned', 'running', 'stuck', 'waiting')"
                             confirm="Are you sure you want to cancel this task?"/>
                     <button name="action_retry"
                             string="Retry"
@@ -45,7 +46,7 @@
                             invisible="state != 'failed'"
                             class="btn-primary"/>
                     <field name="state" widget="statusbar"
-                           statusbar_visible="pending,assigned,running,waiting,done"/>
+                           statusbar_visible="pending,assigned,running,stuck,waiting,done"/>
                 </header>
                 <sheet>
                     <div class="oe_button_box" name="button_box">
@@ -78,6 +79,8 @@
                         </group>
                         <group string="Execution">
                             <field name="worker_id"/>
+                            <field name="runner_id"
+                                   invisible="not runner_id"/>
                             <field name="progress" widget="gtq_task_progress"/>
                             <field name="retry_policy"/>
                             <field name="max_retries"/>
@@ -118,6 +121,8 @@
                         domain="[('state', '=', 'pending')]"/>
                 <filter name="running" string="Running"
                         domain="[('state', '=', 'running')]"/>
+                <filter name="stuck" string="Stuck"
+                        domain="[('state', '=', 'stuck')]"/>
                 <filter name="failed" string="Failed"
                         domain="[('state', '=', 'failed')]"/>
                 <filter name="done" string="Done"
@@ -153,7 +158,7 @@
         <field name="arch" type="xml">
             <list decoration-success="state == 'active'"
                   decoration-danger="state == 'dead'"
-                  decoration-warning="state == 'stale'">
+                  decoration-warning="state == 'stuck'">
                 <field name="name"/>
                 <field name="service_name"/>
                 <field name="dbname"/>
@@ -182,6 +187,7 @@
                 <field name="name"/>
                 <field name="code"/>
                 <field name="module"/>
+                <field name="default_timeout"/>
                 <field name="active"/>
             </list>
         </field>

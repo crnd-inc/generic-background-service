@@ -20,6 +20,12 @@ class GenericTaskQueueTaskType(models.Model):
              "this task type.")
     active = fields.Boolean(default=True)
     description = fields.Text()
+    default_timeout = fields.Integer(
+        default=0,
+        help="Default execution timeout in seconds for tasks of this type. "
+             "0 means no timeout. Can be overridden by the task-level "
+             "timeout field."
+    )
 
     _sql_constraints = [
         ('code_uniq', 'UNIQUE (code)',
