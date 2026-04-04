@@ -50,13 +50,16 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         -------------------
         When a task thread exceeds its timeout but is still alive,
         the task is marked 'stuck'. Stuck threads continue to occupy
-        their parallel slot. If the number of stuck threads reaches
-        _max_stuck_jobs and they remain stuck for _die_on_stuck_timeout
-        seconds, the worker calls worker_stop():
-          - Worker mode (prefork): process dies, Odoo respawns it.
-            Self-healing.
-          - Threaded mode: worker thread dies, no restart occurs.
-            Requires manual server restart.
+        their parallel slot. is_stuck() returns True when ALL slots are
+        occupied by timed-out live threads (worker cannot claim new tasks).
+
+        The service (BackgroundService._check_stuck()) observes is_stuck()
+        and decides what to do based on execution mode and the service's
+        _die_on_stuck_timeout class attribute:
+          - Worker mode (prefork): service stops → process dies → Odoo
+            respawns → _cleanup_orphaned_tasks() recovers stuck tasks.
+          - Threaded mode: log only; service and worker keep running;
+            natural self-healing when stuck threads eventually finish.
     """
 
     def __init__(self, *args, **kwargs):
@@ -68,10 +71,6 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             'task_types', [])
         self._max_parallel_jobs = self._worker_params.get(
             'max_parallel_jobs', 1)
-        self._max_stuck_jobs = self._worker_params.get(
-            'max_stuck_jobs', 0)
-        self._die_on_stuck_timeout = self._worker_params.get(
-            'die_on_stuck_timeout', 300)
         self._default_task_timeout = self._worker_params.get(
             'default_task_timeout', 0)
 
@@ -84,16 +83,27 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         # Timestamp of last stale-worker check
         self._last_stale_check = 0
 
-        # Monotonic timestamp when stuck count first reached threshold.
-        # None if not currently at threshold.
-        self._all_slots_stuck_since = None
-
     def get_sleep_timeout(self):
         if self._active_tasks:
             # Tasks running — poll frequently to detect completion
             return 0.5
         # No tasks — poll less aggressively
         return 1.0
+
+    def is_stuck(self) -> bool:
+        """True when all parallel slots are occupied by timed-out threads.
+
+        The worker cannot claim new tasks at this point. The service's
+        beat loop observes this and decides whether to intervene based
+        on execution mode and _die_on_stuck_timeout.
+        """
+        if not self._active_tasks:
+            return False
+        stuck_count = sum(
+            1 for t in self._active_tasks
+            if t.timed_out and t.thread.is_alive()
+        )
+        return stuck_count >= self._max_parallel_jobs
 
     def on_init(self):
         with self.with_env() as env:
@@ -153,19 +163,16 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         # 3. Check for timed-out task threads → mark stuck
         self._check_timeouts()
 
-        # 4. Check stuck threshold / trigger die-on-stuck countdown
-        self._check_stuck_threshold()
-
-        # 5. Check waiting parents
+        # 4. Check waiting parents
         self._check_waiting_parents()
 
-        # 6. Auto-retry failed retriable tasks
+        # 5. Auto-retry failed retriable tasks
         self._auto_retry_failed()
 
-        # 7. Periodically check for stale peer workers
+        # 6. Periodically check for stale peer workers
         self._check_stale_peers()
 
-        # 8. Claim and spawn new tasks if free slots
+        # 7. Claim and spawn new tasks if free slots
         free_slots = self._max_parallel_jobs - len(self._active_tasks)
         if free_slots > 0:
             self._claim_and_spawn(free_slots)
@@ -175,7 +182,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             with self.with_env() as env:
                 worker = env['generic.task.queue.worker'].browse(
                     self._worker_record_id)
-                worker.heartbeat()
+                worker.heartbeat(stuck=self.is_stuck())
         except Exception:
             _logger.error(
                 "Error sending heartbeat for worker %s",
@@ -440,71 +447,6 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 task_info.task_id, exc_info=True)
         # Always mark timed_out so _check_timeouts doesn't re-enter
         task_info.timed_out = True
-
-    def _check_stuck_threshold(self):
-        """ Check if stuck threads have reached _max_stuck_jobs.
-
-            When the stuck count stays at or above _max_stuck_jobs for
-            _die_on_stuck_timeout seconds continuously, the worker calls
-            worker_stop():
-              - Worker mode (prefork): process dies, Odoo respawns it.
-              - Threaded mode: worker thread dies permanently (manual
-                server restart required).
-
-            The countdown resets whenever the stuck count drops below
-            the threshold (e.g. a zombie thread resolves).
-        """
-        if self._max_stuck_jobs <= 0:
-            return
-
-        stuck_count = sum(
-            1 for t in self._active_tasks
-            if t.timed_out and t.thread.is_alive()
-        )
-
-        if stuck_count < self._max_stuck_jobs:
-            # Below threshold — reset countdown
-            if self._all_slots_stuck_since is not None:
-                _logger.info(
-                    "Worker %s: stuck count dropped to %d "
-                    "(< max_stuck_jobs=%d), resetting countdown",
-                    self._worker_uuid, stuck_count, self._max_stuck_jobs)
-                self._all_slots_stuck_since = None
-            return
-
-        now = time.monotonic()
-        if self._all_slots_stuck_since is None:
-            self._all_slots_stuck_since = now
-            _logger.warning(
-                "Worker %s: %d stuck threads reached "
-                "max_stuck_jobs=%d, starting die-on-stuck "
-                "countdown (%ds)",
-                self._worker_uuid, stuck_count,
-                self._max_stuck_jobs, self._die_on_stuck_timeout)
-            self._update_worker_state_stuck()
-            return
-
-        elapsed = now - self._all_slots_stuck_since
-        if elapsed >= self._die_on_stuck_timeout:
-            _logger.error(
-                "Worker %s: %d slot(s) stuck for %.0fs "
-                "(>= die_on_stuck_timeout=%ds). Stopping worker.",
-                self._worker_uuid, stuck_count,
-                elapsed, self._die_on_stuck_timeout)
-            self.worker_stop()
-
-    def _update_worker_state_stuck(self):
-        """ Set worker DB record to 'stuck' for observability. """
-        try:
-            with self.with_env() as env:
-                worker = env['generic.task.queue.worker'].browse(
-                    self._worker_record_id)
-                if worker.exists():
-                    worker.mark_stuck()
-        except Exception:
-            _logger.error(
-                "Error marking worker %s as stuck in DB",
-                self._worker_uuid, exc_info=True)
 
     def _cleanup_orphaned_tasks(self, worker_record_id):
         """ On startup, any task owned by this worker record that is

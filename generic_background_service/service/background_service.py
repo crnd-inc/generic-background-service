@@ -47,8 +47,21 @@ class BackgroundService(abc.ABC):
     # during shutdown. Subclasses can override for longer-running services.
     _shutdown_timeout = DEFAULT_SHUTDOWN_TIMEOUT
 
+    # Time (seconds) the service must remain stuck before _on_service_stuck()
+    # is called. 0 = disabled (no action taken). Subclasses override.
+    _die_on_stuck_timeout = 0
+
     # TODO: signal to stop workers before module install/update/uninstall
-    def __init__(self):
+    def __init__(self, execution_mode='threaded'):
+        # Execution mode: 'threaded' or 'worker'. Set by the container
+        # at construction time so the service can react appropriately
+        # to requests like request_hard_reload().
+        self._execution_mode = execution_mode
+
+        # Set True by request_hard_reload() in worker mode so the
+        # container knows to exit the process after run() returns.
+        self._hard_reload_requested = False
+
         # Dict with workers assigned for each database
         # Each worker is a thread
         self._workers = {}
@@ -58,6 +71,10 @@ class BackgroundService(abc.ABC):
 
         self._service_event_stop = threading.Event()
         self._service_event_wakeup = threading.Event()
+
+        # Monotonic timestamp when the service first became stuck.
+        # None when not stuck.
+        self._service_stuck_since = None
 
     @property
     def name(self):
@@ -279,6 +296,7 @@ class BackgroundService(abc.ABC):
             self.stop_workers()
             self.clean_workers()
             self.spawn_workers()
+            self._check_stuck()
 
     def run(self):
         """ Run the service
@@ -301,6 +319,79 @@ class BackgroundService(abc.ABC):
             _logger.info("Shutting down workers for service %s...", self.name)
             self.shutdown_workers()
             _logger.info("Service %s stopped.", self.name)
+
+    def request_hard_reload(self):
+        """Request a full process restart.
+
+        Worker mode: stops the service; the container then exits the
+        process so Odoo's PreforkServer respawns it.
+
+        Threaded mode: process restart is not available. Logs a warning
+        and returns without stopping — the service keeps running normally,
+        continuing to track workers and handle stuck recovery naturally.
+        """
+        if self._execution_mode == 'worker':
+            self._hard_reload_requested = True
+            self.stop()
+        else:
+            _logger.warning(
+                "Service %s requested hard reload, but it is only available "
+                "in worker mode. Continuing in threaded mode.", self.name)
+
+    def is_stuck(self) -> bool:
+        """True if any live worker reports is_stuck() == True."""
+        return any(
+            w.is_stuck()
+            for w in self._workers.values()
+            if w.is_alive()
+        )
+
+    def _on_service_stuck(self):
+        """Called when is_stuck() has been True for _die_on_stuck_timeout
+        seconds.
+
+        Default: log only (suitable for threaded mode where stopping the
+        service would lose thread tracking with no recovery path).
+        Override in services to implement exectuin mode aware behaviour.
+
+        Usually could be used to request hard-reload of service,
+        that is available only in worker mode, and assumes respawn of worker
+        process.
+        """
+        _logger.error(
+            "Service %s has been stuck for %.0f seconds. "
+            "No automatic recovery in this execution mode. "
+            "Manual restart may be required.",
+            self.name, self._die_on_stuck_timeout)
+
+    def _check_stuck(self):
+        """Check stuck state in the beat loop and act when timeout expires.
+
+        Called from _run() on every beat cycle.
+        No-op when _die_on_stuck_timeout == 0.
+        """
+        import time
+        if not self._die_on_stuck_timeout:
+            return
+        if self.is_stuck():
+            now = time.monotonic()
+            if self._service_stuck_since is None:
+                self._service_stuck_since = now
+                _logger.warning(
+                    "Service %s is stuck. Will act in %ds if not resolved.",
+                    self.name, self._die_on_stuck_timeout)
+                return
+            elapsed = now - self._service_stuck_since
+            if elapsed >= self._die_on_stuck_timeout:
+                self._on_service_stuck()
+                # Reset so we don't fire again immediately on the next beat;
+                # if still stuck the next cycle restarts the countdown.
+                self._service_stuck_since = None
+        else:
+            if self._service_stuck_since is not None:
+                _logger.info(
+                    "Service %s recovered from stuck state.", self.name)
+            self._service_stuck_since = None
 
     def stop(self):
         """ Stop the service

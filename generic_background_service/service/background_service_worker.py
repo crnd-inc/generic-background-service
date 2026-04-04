@@ -97,6 +97,15 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         """ Check if stop signal received for this worker"""
         return self._worker_event_stop.is_set()
 
+    def is_stuck(self) -> bool:
+        """Return True if this worker cannot make progress.
+
+        Default: always False. Override in concrete workers to expose
+        domain-specific stuck detection. Called by BackgroundService to
+        determine whether the service as a whole is stuck.
+        """
+        return False
+
     def on_init(self):
         """ This method will be called on worker initialization.
             It is safe to access database here to pull worker configuration

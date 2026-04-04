@@ -233,3 +233,110 @@ class TestTimeoutResolutionChain(TransactionCase):
             TaskQueueService,
         )
         self.assertEqual(TaskQueueService._default_task_timeout, 3600)
+
+    def test_task_queue_service_die_on_stuck_timeout(self):
+        """TaskQueueService._die_on_stuck_timeout must be 300 (5 minutes)."""
+        from odoo.addons.generic_task_queue.service.task_queue_service import (
+            TaskQueueService,
+        )
+        self.assertEqual(TaskQueueService._die_on_stuck_timeout, 300)
+
+
+class TestWorkerIsStuck(TransactionCase):
+    """Unit tests for TaskQueueWorker.is_stuck() using minimal fakes."""
+
+    def _make_task_info(self, timed_out, alive):
+        """Return a minimal _TaskThread-like object."""
+        import threading as _threading
+        from odoo.addons.generic_task_queue.service.task_queue_worker import (
+            _TaskThread,
+        )
+        thread = _threading.Thread(target=lambda: None)
+        if alive:
+            thread.start()
+            # thread finishes almost immediately; keep reference only
+        task_info = _TaskThread(
+            task_id=1, thread=thread, timeout=1, runner_id='r')
+        task_info.timed_out = timed_out
+        return task_info
+
+    def _make_worker(self, max_parallel_jobs=1):
+        """Return a TaskQueueWorker with no DB connection."""
+        from odoo.addons.generic_task_queue.service.task_queue_worker import (
+            TaskQueueWorker,
+        )
+        worker = TaskQueueWorker.__new__(TaskQueueWorker)
+        worker._max_parallel_jobs = max_parallel_jobs
+        worker._active_tasks = []
+        return worker
+
+    def test_is_stuck_no_tasks(self):
+        """Worker with no active tasks is not stuck."""
+        worker = self._make_worker()
+        self.assertFalse(worker.is_stuck())
+
+    def test_is_stuck_all_slots_stuck(self):
+        """All slots occupied by timed-out live threads → stuck."""
+        import threading as _threading
+        from odoo.addons.generic_task_queue.service.task_queue_worker import (
+            _TaskThread,
+        )
+        worker = self._make_worker(max_parallel_jobs=1)
+        # Build a thread that blocks until we release it
+        barrier = _threading.Barrier(2)
+
+        def _block():
+            barrier.wait()
+
+        thread = _threading.Thread(target=_block, daemon=True)
+        thread.start()
+        task_info = _TaskThread(
+            task_id=1, thread=thread, timeout=1, runner_id='r')
+        task_info.timed_out = True
+        worker._active_tasks = [task_info]
+        try:
+            self.assertTrue(worker.is_stuck())
+        finally:
+            barrier.wait()
+            thread.join(timeout=2)
+
+    def test_is_stuck_some_timed_out_but_free_slots(self):
+        """Fewer stuck threads than max_parallel_jobs → not stuck."""
+        import threading as _threading
+        from odoo.addons.generic_task_queue.service.task_queue_worker import (
+            _TaskThread,
+        )
+        worker = self._make_worker(max_parallel_jobs=2)
+        barrier = _threading.Barrier(2)
+
+        def _block():
+            barrier.wait()
+
+        thread = _threading.Thread(target=_block, daemon=True)
+        thread.start()
+        task_info = _TaskThread(
+            task_id=1, thread=thread, timeout=1, runner_id='r')
+        task_info.timed_out = True
+        # Only 1 stuck thread but max_parallel_jobs=2 → not stuck
+        worker._active_tasks = [task_info]
+        try:
+            self.assertFalse(worker.is_stuck())
+        finally:
+            barrier.wait()
+            thread.join(timeout=2)
+
+    def test_is_stuck_timed_out_but_thread_dead(self):
+        """Timed-out thread that already finished → not stuck."""
+        from odoo.addons.generic_task_queue.service.task_queue_worker import (
+            _TaskThread,
+        )
+        import threading as _threading
+        worker = self._make_worker(max_parallel_jobs=1)
+        thread = _threading.Thread(target=lambda: None)
+        thread.start()
+        thread.join()  # Let it finish
+        task_info = _TaskThread(
+            task_id=1, thread=thread, timeout=1, runner_id='r')
+        task_info.timed_out = True
+        worker._active_tasks = [task_info]
+        self.assertFalse(worker.is_stuck())

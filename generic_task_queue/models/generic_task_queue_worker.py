@@ -45,11 +45,17 @@ class GenericTaskQueueWorker(models.Model):
                 record.service_name or 'unknown')
 
     @api.private
-    def heartbeat(self):
-        """Update heartbeat timestamp. Reactivate if stuck."""
+    def heartbeat(self, stuck=False):
+        """Update heartbeat timestamp and reflect current stuck state.
+
+        :param bool stuck: True when all worker slots are occupied by
+            timed-out threads (worker cannot claim new tasks). The DB
+            state is kept in sync each heartbeat so it persists across
+            loop iterations rather than being overwritten immediately.
+        """
         self.write({
             'last_heartbeat': fields.Datetime.now(),
-            'state': 'active',
+            'state': 'stuck' if stuck else 'active',
         })
 
     @api.private

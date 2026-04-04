@@ -55,7 +55,7 @@ def wrap_service_as_thread(service_cls):
         """
 
         def __init__(self):
-            self.service = service_cls()
+            self.service = service_cls(execution_mode='threaded')
             super().__init__(
                 name='BGService-%s' % self.service.name)
 
@@ -84,7 +84,7 @@ def wrap_service_as_worker(service_cls):
         def __init__(self, multi):
             super().__init__(multi)
             self.watchdog_timeout = None
-            self.service = service_cls()
+            self.service = service_cls(execution_mode='worker')
             self._limit_time_cpu = (
                 _get_background_service_config()['limit_time_cpu'])
 
@@ -153,5 +153,11 @@ def wrap_service_as_worker(service_cls):
                 "Service container (%s [%s]) starting up",
                 self.service.name, self.pid)
             self.service.run()
+            if self.service._hard_reload_requested:
+                _logger.info(
+                    "Service container (%s [%s]) hard reload: "
+                    "exiting process for respawn.",
+                    self.pid, self.service.name)
+                self.alive = False
 
     return ServiceContainerWorker

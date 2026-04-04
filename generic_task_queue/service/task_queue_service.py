@@ -1,6 +1,10 @@
+import logging
+
 from odoo.addons.generic_background_service import BackgroundService
 
 from .task_queue_worker import TaskQueueWorker
+
+_logger = logging.getLogger(__name__)
 
 
 class TaskQueueService(BackgroundService):
@@ -29,20 +33,28 @@ class TaskQueueService(BackgroundService):
 
     # Stuck task handling
     # -------------------
-    # _max_stuck_jobs: number of simultaneously stuck threads that
-    #   triggers the die-on-stuck countdown. 0 = feature disabled.
-    # _die_on_stuck_timeout: seconds the stuck count must remain at or
-    #   above _max_stuck_jobs before the worker stops itself.
-    #   In worker mode (prefork) the process dies and Odoo respawns it.
-    #   In threaded mode the worker thread dies — manual restart needed.
+    # _die_on_stuck_timeout: seconds the service must remain stuck before
+    #   _on_service_stuck() is called. Read by BackgroundService._check_stuck()
+    #   via MRO. Self-healing triggers when every parallel slot is occupied
+    #   by a timed-out thread (is_stuck() == True) continuously for this
+    #   duration. In worker mode (prefork) the service stops → process dies
+    #   → Odoo respawns → _cleanup_orphaned_tasks() recovers stuck tasks.
+    #   In threaded mode the service logs only — natural self-healing when
+    #   stuck threads eventually complete.
     # _default_task_timeout: fallback timeout (seconds) applied when a
     #   task has no timeout set and the task type has no default_timeout.
     #   Acts as a safety net — tasks that genuinely need more time should
     #   set default_timeout=0 on their task type to opt out explicitly.
     #   0 = no timeout (not recommended for production).
-    _max_stuck_jobs = 0
     _die_on_stuck_timeout = 300
     _default_task_timeout = 3600  # 1 hour safety net
+
+    def _on_service_stuck(self):
+        _logger.error(
+            "Service %s has been stuck for %.0f seconds, "
+            "requesting hard reload.",
+            self.name, self._die_on_stuck_timeout)
+        self.request_hard_reload()
 
     def get_worker_class(self):
         return TaskQueueWorker
@@ -52,7 +64,5 @@ class TaskQueueService(BackgroundService):
             'task_types': self._task_types,  # empty = all types
             'channels': self._channels,
             'max_parallel_jobs': self._max_parallel_jobs,
-            'max_stuck_jobs': self._max_stuck_jobs,
-            'die_on_stuck_timeout': self._die_on_stuck_timeout,
             'default_task_timeout': self._default_task_timeout,
         }
