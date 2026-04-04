@@ -381,6 +381,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             'runner_id': False,
                             'task_error': False,
                             'progress': 0,
+                            'retry_count': task.retry_count + 1,
                         })
                     else:
                         task.write({

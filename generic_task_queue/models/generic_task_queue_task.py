@@ -370,6 +370,7 @@ class GenericTaskQueueTask(models.Model):
         self.sudo().write({
             'state': 'pending',
             'worker_id': False,
+            'runner_id': False,
             'task_error': False,
             'progress': 0,
         })
