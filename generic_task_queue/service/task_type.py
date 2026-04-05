@@ -28,6 +28,13 @@ class AbstractTaskType(abc.ABC):
     # Dotted name for registry. If None, the class is not registered.
     _name = None
 
+    # If True, a toast notification is sent to the task creator when a
+    # task of this type reaches a terminal state (done/failed).
+    # Set to True in subclasses for user-facing task types where the
+    # user needs to know the outcome.
+    # task.type.model.method leaves this False — it's a low-level utility.
+    _notify_on_completion = False
+
     def __init_subclass__(cls, **kwargs):
         result = super().__init_subclass__(**kwargs)
         if cls._name is not None:

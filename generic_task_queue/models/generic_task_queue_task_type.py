@@ -20,6 +20,10 @@ class GenericTaskQueueTaskType(models.Model):
              "this task type.")
     active = fields.Boolean(default=True)
     description = fields.Text()
+    notify_on_completion = fields.Boolean(
+        default=False,
+        help="If enabled, the task creator receives a toast notification "
+             "when a task of this type completes or fails.")
     default_timeout = fields.Integer(
         default=0,
         help="Default execution timeout in seconds for tasks of this type. "
@@ -49,14 +53,21 @@ class GenericTaskQueueTaskType(models.Model):
             # Use Odoo's standard convention: odoo.addons.MODULE.xxx
             parts = cls.__module__.split('.')
             module = parts[2] if len(parts) > 2 else ''
-            self._sync_type(code, module)
+            self._sync_type(
+                code, module,
+                notify_on_completion=cls._notify_on_completion,
+            )
 
     @api.model
-    def _sync_type(self, code, module, name=None):
+    def _sync_type(self, code, module, name=None, notify_on_completion=False):
         """ Create or update a task type record. """
         existing = self.search([('code', '=', code)], limit=1)
         if existing:
-            vals = {'module': module, 'active': True}
+            vals = {
+                'module': module,
+                'active': True,
+                'notify_on_completion': notify_on_completion,
+            }
             if name:
                 vals['name'] = name
             existing.write(vals)
@@ -66,4 +77,5 @@ class GenericTaskQueueTaskType(models.Model):
                 'module': module,
                 'name': name or code,
                 'active': True,
+                'notify_on_completion': notify_on_completion,
             })

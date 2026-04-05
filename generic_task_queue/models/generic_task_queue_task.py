@@ -79,6 +79,34 @@ class GenericTaskQueueTask(models.Model):
                 'progress': task.progress,
             })
 
+    def _notify_completion(self):
+        """ Send a toast notification to the task creator when a task
+            reaches a terminal state, if the task type opts in.
+
+            Skipped if the creator has no partner (e.g. system users).
+            Whether to notify for child tasks is left to the task type —
+            set notify_on_completion = True only on types where it makes
+            sense.
+        """
+        for task in self:
+            if not task.type_id.notify_on_completion:
+                continue
+            partner = task.create_uid.partner_id
+            if not partner:
+                continue
+            if task.state == 'done':
+                notif_type = 'success'
+                title = self.env._('Task completed')
+            else:  # failed
+                notif_type = 'danger'
+                title = self.env._('Task failed')
+            partner._bus_send('simple_notification', {
+                'title': title,
+                'message': task.name,
+                'type': notif_type,
+                'sticky': task.state == 'failed',
+            })
+
     name = fields.Char(required=True, readonly=True)
     type_id = fields.Many2one(
         'generic.task.queue.task.type',
@@ -302,6 +330,7 @@ class GenericTaskQueueTask(models.Model):
             'progress': 100,
         })
         self._notify_state_change()
+        self._notify_completion()
 
     @api.private
     def action_wait_children(self):
@@ -347,6 +376,7 @@ class GenericTaskQueueTask(models.Model):
             vals['task_error_data'] = error_data
         self.write(vals)
         self._notify_state_change()
+        self._notify_completion()
 
     def action_retry(self):
         """ Transition: failed → pending (if retriable).
