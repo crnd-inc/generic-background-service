@@ -151,6 +151,10 @@ export class TaskAutoRefreshField extends Component {
         );
     }
 
+    onClickReload() {
+        this.props.record.load();
+    }
+
     _onNotification(payload) {
         if (payload.progress !== undefined) {
             this.state.progress = payload.progress;

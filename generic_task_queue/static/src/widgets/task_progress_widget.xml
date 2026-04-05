@@ -2,7 +2,11 @@
 <templates xml:space="preserve">
     <t t-name="generic_task_queue.TaskProgressWidget">
         <div class="gtq-task-progress d-flex align-items-center gap-2">
-            <span t-if="isActive" class="fa fa-spinner fa-spin text-muted"/>
+            <span t-if="isActive"
+                  class="fa fa-spinner fa-spin text-muted"
+                  style="cursor: pointer;"
+                  title="Click to refresh"
+                  t-on-click="onClickReload"/>
             <div class="progress flex-grow-1" style="height: 6px;">
                 <div
                     class="progress-bar"

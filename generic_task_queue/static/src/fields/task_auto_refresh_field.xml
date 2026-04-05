@@ -9,7 +9,10 @@
         <!-- Progress block: spinner + bar while task is active -->
         <t t-if="props.showProgress and _currentTaskId() and isActive">
             <div class="gtq-task-progress d-flex align-items-center gap-2 mt-1">
-                <span class="fa fa-spinner fa-spin text-muted"/>
+                <span class="fa fa-spinner fa-spin text-muted"
+                      style="cursor: pointer;"
+                      title="Click to refresh"
+                      t-on-click="onClickReload"/>
                 <div class="progress flex-grow-1" style="height: 6px;">
                     <div
                         class="progress-bar"

@@ -78,6 +78,10 @@ export class TaskProgressWidget extends Component {
         );
     }
 
+    onClickReload() {
+        this.props.record.load();
+    }
+
     _onNotification(payload) {
         if (payload.progress !== undefined) {
             this.state.progress = payload.progress;
@@ -99,13 +103,15 @@ export class TaskProgressWidget extends Component {
 
     /**
      * When active: live value from bus notifications.
-     * When inactive: DB value from the record (persists final progress
-     * after record.load() on task completion).
+     * When inactive: DB value from the record (authoritative after
+     * record.load()), falling back to state.progress to avoid showing
+     * 0% in the brief window between the terminal notification and the
+     * record reload completing.
      */
     get displayProgress() {
         return this.isActive
             ? this.state.progress
-            : (this.props.record.data.progress || 0);
+            : (this.props.record.data.progress || this.state.progress);
     }
 }
 
