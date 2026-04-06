@@ -43,6 +43,7 @@ class GenericTaskQueueWorker(models.Model):
         ('uuid_uniq', 'UNIQUE (uuid)', 'Worker UUID must be unique.'),
     ]
 
+    @api.depends('service_name', 'hostname')
     def _compute_name(self):
         for record in self:
             record.name = "%s @ %s" % (
