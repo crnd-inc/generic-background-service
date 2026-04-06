@@ -47,10 +47,17 @@ class GenericTaskQueueTaskType(models.Model):
     ]
 
     def _register_hook(self):
-        """ Sync Python-discovered task types to DB after
-            every module install/upgrade. Runs per-database.
+        """ Sync Python-discovered task types to DB, but only when
+            at least one module was installed or upgraded in this startup.
+
+            On a plain restart (no module changes) pool.updated_modules is
+            empty, so the sync is skipped — the DB records were already
+            written during the last install/upgrade and are still valid.
+            This also avoids SerializationFailure from concurrent worker
+            processes all trying to upsert the same rows on every restart.
         """
-        self._sync_from_python_registry()
+        if self.pool.updated_modules:
+            self._sync_from_python_registry()
 
     @api.model
     def _sync_from_python_registry(self):
