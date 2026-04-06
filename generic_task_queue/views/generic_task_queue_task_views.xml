@@ -176,6 +176,7 @@
                   decoration-warning="state == 'stuck'">
                 <field name="name"/>
                 <field name="service_name"/>
+                <field name="hostname"/>
                 <field name="dbname"/>
                 <field name="state"/>
                 <field name="max_parallel_jobs"/>

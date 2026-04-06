@@ -209,10 +209,9 @@ class TestAutoRetry(TransactionCase):
         ], limit=10)
         self.assertIn(task, failed)
 
-        # Retry those that haven't exceeded max_retries
+        # SQL already filters retry_count <= max_retries
         for t in failed:
-            if t.retry_count < t.max_retries:
-                t.action_retry()
+            t.action_retry()
 
         self.assertEqual(task.state, 'pending')
 

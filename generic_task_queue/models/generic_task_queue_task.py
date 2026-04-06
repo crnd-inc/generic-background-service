@@ -378,11 +378,12 @@ class GenericTaskQueueTask(models.Model):
         self._notify_state_change()
         self._notify_completion()
 
-    def action_retry(self):
+    def action_retry(self, eta=None):
         """ Transition: failed → pending (if retriable).
 
-            Callable by task owner from UI. Uses sudo() to write
-            protected fields.
+            Callable by task owner from UI (eta=None — execute
+            immediately) or by the worker's auto-retry loop
+            (eta=datetime — delay until the given time).
 
             Manual retry is always allowed regardless of
             max_retries — the limit only applies to automatic
@@ -397,13 +398,15 @@ class GenericTaskQueueTask(models.Model):
                     self.env._(
                         "Task '%(name)s' is not retriable.",
                         name=record.name))
-        self.sudo().write({
+        vals = {
             'state': 'pending',
             'worker_id': False,
             'runner_id': False,
             'task_error': False,
             'progress': 0,
-        })
+            'eta': eta,
+        }
+        self.sudo().write(vals)
         self._notify_state_change()
 
     def action_cancel(self):

@@ -57,25 +57,35 @@ class GenericTaskQueueTaskType(models.Model):
                 code, module,
                 notify_on_completion=cls._notify_on_completion,
             )
+        self.invalidate_model()
 
     @api.model
     def _sync_type(self, code, module, name=None, notify_on_completion=False):
-        """ Create or update a task type record. """
-        existing = self.search([('code', '=', code)], limit=1)
-        if existing:
-            vals = {
-                'module': module,
-                'active': True,
-                'notify_on_completion': notify_on_completion,
-            }
-            if name:
-                vals['name'] = name
-            existing.write(vals)
-        else:
-            self.create({
-                'code': code,
-                'module': module,
-                'name': name or code,
-                'active': True,
-                'notify_on_completion': notify_on_completion,
-            })
+        """ Create or update a task type record.
+
+            Uses INSERT ... ON CONFLICT DO UPDATE so concurrent calls
+            from multiple worker processes never conflict.  name is only
+            set on INSERT; subsequent syncs leave it alone so user
+            customisations are preserved.
+        """
+        self.env.cr.execute("""
+            INSERT INTO generic_task_queue_task_type
+                (code, module, name, active, notify_on_completion,
+                 create_uid, write_uid, create_date, write_date)
+            VALUES
+                (%(code)s, %(module)s, %(name)s, true,
+                 %(notify_on_completion)s, %(uid)s, %(uid)s,
+                 (NOW() AT TIME ZONE 'UTC'), (NOW() AT TIME ZONE 'UTC'))
+            ON CONFLICT (code) DO UPDATE SET
+                module               = EXCLUDED.module,
+                active               = true,
+                notify_on_completion = EXCLUDED.notify_on_completion,
+                write_uid            = EXCLUDED.write_uid,
+                write_date           = EXCLUDED.write_date
+        """, {
+            'code': code,
+            'module': module,
+            'name': name or code,
+            'notify_on_completion': notify_on_completion,
+            'uid': self.env.uid,
+        })

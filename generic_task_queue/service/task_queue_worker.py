@@ -1,8 +1,10 @@
 import logging
+import socket
 import time
 import traceback
 import threading
 import uuid
+from datetime import datetime, timedelta
 
 from odoo import exceptions as odoo_exceptions
 
@@ -114,6 +116,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 channels=','.join(self._channels),
                 task_types=','.join(self._task_types),
                 max_parallel_jobs=self._max_parallel_jobs,
+                hostname=socket.gethostname(),
             )
             self._worker_record_id = worker_rec.id
         # Cleanup orphaned tasks in a separate transaction so it
@@ -561,6 +564,10 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             Uses FOR UPDATE SKIP LOCKED to prevent multiple
             workers from retrying the same tasks simultaneously.
 
+            Only tasks with retry_count <= max_retries are selected,
+            so permanently-exhausted tasks never consume query slots
+            or acquire locks.
+
             NOTE: 'stuck' state is intentionally excluded. Stuck tasks
             are retried only after the worker restarts and mark_dead()
             transitions them to 'failed'. This prevents two threads
@@ -575,6 +582,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         SELECT id FROM generic_task_queue_task
                         WHERE state = 'failed'
                           AND retry_policy = 'retriable'
+                          AND retry_count <= max_retries
                           AND channel IN %s
                           AND type_code IN %s
                         LIMIT 10
@@ -586,19 +594,63 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         SELECT id FROM generic_task_queue_task
                         WHERE state = 'failed'
                           AND retry_policy = 'retriable'
+                          AND retry_count <= max_retries
                           AND channel IN %s
                         LIMIT 10
                         FOR UPDATE SKIP LOCKED
                     """, (tuple(self._channels),))
                 task_ids = [r[0] for r in env.cr.fetchall()]
-                if task_ids:
-                    tasks = env['generic.task.queue.task'].browse(task_ids)
-                    for task in tasks:
-                        if task.retry_count < task.max_retries:
-                            task.action_retry()
+                if not task_ids:
+                    return
+                _logger.debug(
+                    "Auto-retrying %d failed task(s): %s",
+                    len(task_ids), task_ids)
+                registry = TaskTypeRegistry()
+                tasks = env['generic.task.queue.task'].browse(task_ids)
+                for task in tasks:
+                    eta = self._retry_eta(
+                        registry, task.type_code,
+                        task.retry_count)
+                    try:
+                        task.action_retry(eta=eta)
+                        _logger.info(
+                            "Task %d (type=%s, retry_count=%d/%d) "
+                            "queued for retry%s",
+                            task.id, task.type_code,
+                            task.retry_count, task.max_retries,
+                            " (eta=%s)" % eta if eta else "")
+                    except Exception:
+                        _logger.error(
+                            "Error retrying task %d",
+                            task.id, exc_info=True)
         except Exception:
             _logger.error(
                 "Error auto-retrying failed tasks", exc_info=True)
+
+    @staticmethod
+    def _retry_eta(registry, type_code, retry_count):
+        """ Return the datetime after which the next retry should run,
+            or None for immediate execution.
+
+            Reads _retry_delays from the registered task type class:
+              - dict  {retry_count: seconds}: explicit per-attempt delay
+              - 'exponential': min(2**retry_count, 3600) seconds
+              - {} / missing key: None (immediate)
+        """
+        try:
+            cls = registry.get_task_type(type_code)
+        except KeyError:
+            return None
+        delays = cls._retry_delays
+        if not delays:
+            return None
+        if delays == 'exponential':
+            delay = min(2 ** retry_count, 3600)
+        else:
+            delay = delays.get(retry_count, 0)
+        if not delay:
+            return None
+        return datetime.utcnow() + timedelta(seconds=delay)
 
     def _check_stale_peers(self):
         """ Periodically check for stale peer workers. """

@@ -19,6 +19,11 @@ class GenericTaskQueueWorker(models.Model):
         required=True, index=True, readonly=True)
     service_name = fields.Char(index=True)
     dbname = fields.Char(index=True)
+    hostname = fields.Char(
+        index=True, readonly=True,
+        help="Hostname of the machine running this worker. "
+             "Used to give each machine its own worker record in "
+             "multi-instance deployments.")
     state = fields.Selection([
         ('active', 'Active'),
         ('stuck', 'Stuck'),
@@ -40,9 +45,9 @@ class GenericTaskQueueWorker(models.Model):
 
     def _compute_name(self):
         for record in self:
-            record.name = "Worker %s (%s)" % (
-                record.uuid[:8] if record.uuid else '?',
-                record.service_name or 'unknown')
+            record.name = "%s @ %s" % (
+                record.service_name or 'unknown',
+                record.hostname or 'unknown')
 
     @api.private
     def heartbeat(self, stuck=False):
@@ -101,17 +106,22 @@ class GenericTaskQueueWorker(models.Model):
     @api.private
     @api.model
     def find_or_create(self, service_name, dbname, uuid,
-                       channels, task_types, max_parallel_jobs):
-        """Find existing worker record for this service+db,
+                       channels, task_types, max_parallel_jobs,
+                       hostname=None):
+        """Find existing worker record for this service+db+hostname,
         or create a new one.
 
-        Reuses existing records to avoid table bloat from
-        repeated restarts.
+        Each (service_name, dbname, hostname) triple gets its own record,
+        so machines in a multi-instance deployment never clobber each
+        other's UUID. Records are reused across restarts of the same
+        service on the same machine.
         """
-        existing = self.search([
+        domain = [
             ('service_name', '=', service_name),
             ('dbname', '=', dbname),
-        ], limit=1)
+            ('hostname', '=', hostname),
+        ]
+        existing = self.search(domain, limit=1)
         vals = {
             'uuid': uuid,
             'state': 'active',
@@ -119,6 +129,7 @@ class GenericTaskQueueWorker(models.Model):
             'channels': channels,
             'task_types': task_types,
             'max_parallel_jobs': max_parallel_jobs,
+            'hostname': hostname,
         }
         if existing:
             existing.write(vals)
