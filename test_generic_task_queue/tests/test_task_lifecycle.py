@@ -15,8 +15,8 @@ class TestTaskCreation(TransactionCase):
         self.assertEqual(task.state, 'pending')
         self.assertEqual(task.channel, 'default')
         self.assertEqual(task.priority, 5)
-        self.assertEqual(task.retry_policy, 'retriable')
-        self.assertEqual(task.max_retries, 3)
+        self.assertEqual(task.retry_policy, 'non_retriable')
+        self.assertEqual(task.max_retries, 0)
         self.assertEqual(task.retry_count, 0)
         self.assertEqual(task.progress, 0)
         self.assertTrue(task.date_created)
@@ -45,6 +45,8 @@ class TestTaskStateTransitions(TransactionCase):
         self.task = Task.create({
             'name': 'Lifecycle test',
             'type_code': 'test.task.type.noop',
+            'retry_policy': 'retriable',
+            'max_retries': 3,
         })
         self.worker = self.env['generic.task.queue.worker'].create({
             'uuid': 'test-worker-uuid',

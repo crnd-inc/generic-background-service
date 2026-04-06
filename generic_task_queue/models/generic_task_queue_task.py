@@ -154,8 +154,8 @@ class GenericTaskQueueTask(models.Model):
         help="Earliest time this task should be executed. "
              "Leave empty for immediate execution.")
     retry_policy = fields.Selection(
-        RETRY_POLICIES, default='retriable', required=True, readonly=True)
-    max_retries = fields.Integer(default=3, readonly=True)
+        RETRY_POLICIES, default='non_retriable', required=True, readonly=True)
+    max_retries = fields.Integer(default=0, readonly=True)
     retry_count = fields.Integer(default=0, readonly=True)
     timeout = fields.Integer(
         default=0, readonly=True,
@@ -657,7 +657,7 @@ class GenericTaskQueueTask(models.Model):
     def create_task(self, type_code, name=None, params=None,
                     channel='default', priority=5, eta=None,
                     timeout=0, parent_id=None,
-                    retry_policy='retriable', max_retries=3):
+                    retry_policy=None, max_retries=None):
         """ Convenience method to create a task.
 
             Usage::
@@ -682,10 +682,25 @@ class GenericTaskQueueTask(models.Model):
             :param datetime eta: earliest execution time
             :param int timeout: max execution seconds (0 = no limit)
             :param int parent_id: parent task ID for sub-tasks
-            :param str retry_policy: 'retriable' or 'non_retriable'
-            :param int max_retries: max retry count
+            :param str retry_policy: 'retriable' or 'non_retriable'.
+                Defaults to the task type's ``_retry_policy`` class attribute.
+            :param int max_retries: max retry count.
+                Defaults to the task type's ``_max_retries`` class attribute.
             :return: created task record
         """
+        if retry_policy is None or max_retries is None:
+            from ..service.task_type_registry import TaskTypeRegistry
+            try:
+                cls = TaskTypeRegistry().get_task_type(type_code)
+                if retry_policy is None:
+                    retry_policy = cls._retry_policy
+                if max_retries is None:
+                    max_retries = cls._max_retries
+            except KeyError:
+                if retry_policy is None:
+                    retry_policy = 'non_retriable'
+                if max_retries is None:
+                    max_retries = 0
         if name is None:
             name = type_code
         vals = {

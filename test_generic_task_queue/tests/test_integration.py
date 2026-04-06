@@ -129,6 +129,7 @@ class TestEndToEndExecution(TransactionCase):
                 'method': 'do_increment',
                 'record_ids': [rec.id],
             },
+            retry_policy='retriable',
             max_retries=3,
         )
 
@@ -191,6 +192,7 @@ class TestAutoRetry(TransactionCase):
         task = Task.create_task(
             'test.task.type.noop',
             name='Auto-retry test',
+            retry_policy='retriable',
             max_retries=3,
         )
         task.action_assign(worker)

@@ -30,6 +30,16 @@ class GenericTaskQueueTaskType(models.Model):
              "0 means no timeout. Can be overridden by the task-level "
              "timeout field."
     )
+    default_retry_policy = fields.Selection(
+        [('retriable', 'Retriable'), ('non_retriable', 'Non-Retriable')],
+        readonly=True,
+        help="Default retry policy defined in code by the task type. "
+             "Override per-task at enqueue time via create_task().")
+    default_max_retries = fields.Integer(
+        readonly=True,
+        help="Default maximum automatic retries defined in code by the "
+             "task type. Override per-task at enqueue time via create_task()."
+    )
 
     _sql_constraints = [
         ('code_uniq', 'UNIQUE (code)',
@@ -56,11 +66,15 @@ class GenericTaskQueueTaskType(models.Model):
             self._sync_type(
                 code, module,
                 notify_on_completion=cls._notify_on_completion,
+                default_retry_policy=cls._retry_policy,
+                default_max_retries=cls._max_retries,
             )
         self.invalidate_model()
 
     @api.model
-    def _sync_type(self, code, module, name=None, notify_on_completion=False):
+    def _sync_type(self, code, module, name=None, notify_on_completion=False,
+                   default_retry_policy='non_retriable',
+                   default_max_retries=0):
         """ Create or update a task type record.
 
             Uses INSERT ... ON CONFLICT DO UPDATE so concurrent calls
@@ -71,21 +85,28 @@ class GenericTaskQueueTaskType(models.Model):
         self.env.cr.execute("""
             INSERT INTO generic_task_queue_task_type
                 (code, module, name, active, notify_on_completion,
+                 default_retry_policy, default_max_retries,
                  create_uid, write_uid, create_date, write_date)
             VALUES
                 (%(code)s, %(module)s, %(name)s, true,
-                 %(notify_on_completion)s, %(uid)s, %(uid)s,
+                 %(notify_on_completion)s,
+                 %(default_retry_policy)s, %(default_max_retries)s,
+                 %(uid)s, %(uid)s,
                  (NOW() AT TIME ZONE 'UTC'), (NOW() AT TIME ZONE 'UTC'))
             ON CONFLICT (code) DO UPDATE SET
-                module               = EXCLUDED.module,
-                active               = true,
-                notify_on_completion = EXCLUDED.notify_on_completion,
-                write_uid            = EXCLUDED.write_uid,
-                write_date           = EXCLUDED.write_date
+                module                = EXCLUDED.module,
+                active                = true,
+                notify_on_completion  = EXCLUDED.notify_on_completion,
+                default_retry_policy  = EXCLUDED.default_retry_policy,
+                default_max_retries   = EXCLUDED.default_max_retries,
+                write_uid             = EXCLUDED.write_uid,
+                write_date            = EXCLUDED.write_date
         """, {
             'code': code,
             'module': module,
             'name': name or code,
             'notify_on_completion': notify_on_completion,
+            'default_retry_policy': default_retry_policy,
+            'default_max_retries': default_max_retries,
             'uid': self.env.uid,
         })

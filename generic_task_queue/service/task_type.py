@@ -35,6 +35,17 @@ class AbstractTaskType(abc.ABC):
     # task.type.model.method leaves this False — it's a low-level utility.
     _notify_on_completion = False
 
+    # Default retry policy for tasks of this type.
+    # 'retriable'     — failed tasks are automatically retried
+    # 'non_retriable' — tasks are never retried automatically (default)
+    # Can be overridden per-task at enqueue time via create_task().
+    _retry_policy = 'non_retriable'
+
+    # Maximum number of automatic retries for tasks of this type.
+    # After retry_count reaches this value the task stays failed.
+    # Can be overridden per-task at enqueue time via create_task().
+    _max_retries = 0
+
     # Delay (in seconds) before each automatic retry attempt.
     # The key is the value of retry_count AFTER the failure
     # (i.e. "how long to wait before the Nth retry").

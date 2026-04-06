@@ -194,7 +194,7 @@
         <field name="view_mode">list</field>
     </record>
 
-    <!-- Task Type Tree View -->
+    <!-- Task Type List View -->
     <record id="view_generic_task_queue_task_type_tree" model="ir.ui.view">
         <field name="name">generic.task.queue.task.type.tree</field>
         <field name="model">generic.task.queue.task.type</field>
@@ -203,9 +203,41 @@
                 <field name="name"/>
                 <field name="code"/>
                 <field name="module"/>
+                <field name="default_retry_policy"/>
+                <field name="default_max_retries"/>
                 <field name="default_timeout"/>
+                <field name="notify_on_completion"/>
                 <field name="active"/>
             </list>
+        </field>
+    </record>
+
+    <!-- Task Type Form View -->
+    <record id="view_generic_task_queue_task_type_form" model="ir.ui.view">
+        <field name="name">generic.task.queue.task.type.form</field>
+        <field name="model">generic.task.queue.task.type</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <group>
+                        <group string="Identity">
+                            <field name="name"/>
+                            <field name="code"/>
+                            <field name="module"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Defaults (defined in code)">
+                            <field name="default_retry_policy"/>
+                            <field name="default_max_retries"/>
+                            <field name="default_timeout"/>
+                            <field name="notify_on_completion"/>
+                        </group>
+                    </group>
+                    <group string="Description">
+                        <field name="description" nolabel="1"/>
+                    </group>
+                </sheet>
+            </form>
         </field>
     </record>
 
@@ -213,7 +245,7 @@
     <record id="action_generic_task_queue_task_type" model="ir.actions.act_window">
         <field name="name">Task Types</field>
         <field name="res_model">generic.task.queue.task.type</field>
-        <field name="view_mode">list</field>
+        <field name="view_mode">list,form</field>
     </record>
 
     <!-- Menu -->

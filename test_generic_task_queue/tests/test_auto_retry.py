@@ -37,6 +37,7 @@ def _make_failed_task(env, worker, max_retries=3, retry_count=None):
     task = env['generic.task.queue.task'].create_task(
         'test.task.type.noop',
         name='retry-test',
+        retry_policy='retriable',
         max_retries=max_retries,
     )
     task.action_assign(worker)

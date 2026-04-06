@@ -21,6 +21,8 @@ class ModelMethodTaskType(AbstractTaskType):
         as a background task without writing a custom task type.
     """
     _name = 'task.type.model.method'
+    _retry_policy = 'non_retriable'
+    _max_retries = 0
 
     def execute(self, env, task):
         params = task.task_params
