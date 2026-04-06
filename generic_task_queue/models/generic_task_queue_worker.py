@@ -90,7 +90,6 @@ class GenericTaskQueueWorker(models.Model):
                 task.write({
                     'state': 'failed',
                     'task_error': 'Worker died during execution',
-                    'retry_count': task.retry_count + 1,
                 })
 
     @api.private

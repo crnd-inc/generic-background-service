@@ -29,6 +29,10 @@ def _make_worker(env):
 
 def _make_failed_task(env, worker, max_retries=3, retry_count=None):
     """Create a task and put it in 'failed' state with the given retry_count.
+
+    After action_fail retry_count stays at 0 (only action_retry increments it).
+    Override with retry_count= to simulate a task that has already been retried
+    N times and failed again.
     """
     task = env['generic.task.queue.task'].create_task(
         'test.task.type.noop',
@@ -38,8 +42,9 @@ def _make_failed_task(env, worker, max_retries=3, retry_count=None):
     task.action_assign(worker)
     task.action_start()
     task.action_fail('simulated failure')
-    # action_fail sets retry_count = 1; override if a different value is needed
-    if retry_count is not None and retry_count != 1:
+    # action_fail leaves retry_count = 0;
+    #     override if a different value is needed
+    if retry_count is not None and retry_count != 0:
         task.write({'retry_count': retry_count})
     return task
 
@@ -56,7 +61,7 @@ def _run_auto_retry_sql(env, channels=('default',), task_types=None):
             SELECT id FROM generic_task_queue_task
             WHERE state = 'failed'
               AND retry_policy = 'retriable'
-              AND retry_count <= max_retries
+              AND retry_count < max_retries
               AND channel IN %s
               AND type_code IN %s
             FOR UPDATE SKIP LOCKED
@@ -66,7 +71,7 @@ def _run_auto_retry_sql(env, channels=('default',), task_types=None):
             SELECT id FROM generic_task_queue_task
             WHERE state = 'failed'
               AND retry_policy = 'retriable'
-              AND retry_count <= max_retries
+              AND retry_count < max_retries
               AND channel IN %s
             FOR UPDATE SKIP LOCKED
         """, (tuple(channels),))
@@ -107,10 +112,14 @@ def _make_type_cls(retry_delays):
 # ---------------------------------------------------------------------------
 
 class TestAutoRetryBoundary(TransactionCase):
-    """The auto-retry guard is retry_count <= max_retries.
+    """The auto-retry guard is retry_count < max_retries.
+
+    retry_count counts how many times action_retry() has been called
+    (i.e. how many retries have already been attempted).  action_fail()
+    does NOT increment retry_count.
 
     With max_retries=3, retries should be allowed when retry_count is
-    1, 2, or 3.  When retry_count reaches 4 the task should stay failed.
+    0, 1, or 2.  When retry_count reaches 3 the task should stay failed.
     """
 
     def setUp(self):
@@ -129,29 +138,31 @@ class TestAutoRetryBoundary(TransactionCase):
             t.action_retry()
 
     def test_retry_count_below_max_retries_is_retried(self):
-        """retry_count=1, max_retries=3 → task is retried."""
+        """retry_count=0, max_retries=3 → task is retried (0 < 3)."""
         task = _make_failed_task(self.env, self.worker, max_retries=3)
-        self.assertEqual(task.retry_count, 1)
+        self.assertEqual(task.retry_count, 0)
 
         self._apply_auto_retry_logic(task)
 
         self.assertEqual(task.state, 'pending')
 
-    def test_retry_count_equal_max_retries_is_retried(self):
-        """retry_count=3, max_retries=3 → last retry is still allowed."""
+    def test_retry_count_one_below_max_retries_is_retried(self):
+        """retry_count=2, max_retries=3 → last auto-retry is still allowed
+           (2 < 3)."""
+        task = _make_failed_task(
+            self.env, self.worker, max_retries=3, retry_count=2)
+        self.assertEqual(task.retry_count, 2)
+
+        self._apply_auto_retry_logic(task)
+
+        self.assertEqual(task.state, 'pending')
+
+    def test_retry_count_equal_max_retries_is_not_retried(self):
+        """retry_count=3, max_retries=3 → task stays failed
+           (exhausted, 3 < 3 is false)."""
         task = _make_failed_task(
             self.env, self.worker, max_retries=3, retry_count=3)
         self.assertEqual(task.retry_count, 3)
-
-        self._apply_auto_retry_logic(task)
-
-        self.assertEqual(task.state, 'pending')
-
-    def test_retry_count_exceeds_max_retries_is_not_retried(self):
-        """retry_count=4, max_retries=3 → task stays failed (exhausted)."""
-        task = _make_failed_task(
-            self.env, self.worker, max_retries=3, retry_count=4)
-        self.assertEqual(task.retry_count, 4)
 
         self._apply_auto_retry_logic(task)
 
@@ -160,10 +171,10 @@ class TestAutoRetryBoundary(TransactionCase):
     def test_max_retries_zero_never_auto_retried(self):
         """max_retries=0 means no automatic retries at all.
 
-        After the first failure retry_count=1, which already exceeds 0.
+        After the first failure retry_count=0.  0 < 0 is false → stays failed.
         """
         task = _make_failed_task(self.env, self.worker, max_retries=0)
-        self.assertEqual(task.retry_count, 1)
+        self.assertEqual(task.retry_count, 0)
 
         self._apply_auto_retry_logic(task)
 

@@ -80,14 +80,15 @@ class TestTaskStateTransitions(TransactionCase):
         self.assertEqual(self.task.progress, 100)
 
     def test_running_to_failed(self):
-        """running → failed should set error and increment retry_count."""
+        """running → failed should set error; retry_count is not incremented.
+        """
         worker = self.worker
         self.task.action_assign(worker)
         self.task.action_start()
         self.task.action_fail('Something went wrong')
         self.assertEqual(self.task.state, 'failed')
         self.assertEqual(self.task.task_error, 'Something went wrong')
-        self.assertEqual(self.task.retry_count, 1)
+        self.assertEqual(self.task.retry_count, 0)
         self.assertTrue(self.task.date_completed)
 
     def test_failed_to_pending_retry(self):
@@ -102,18 +103,25 @@ class TestTaskStateTransitions(TransactionCase):
         self.assertFalse(self.task.task_error)
 
     def test_retry_increments_count(self):
-        """Each fail should increment retry_count."""
+        """Each action_retry() should increment retry_count;
+           action_fail does not.
+        """
         worker = self.worker
 
         self.task.action_assign(worker)
         self.task.action_start()
         self.task.action_fail('Error 1')
-        self.assertEqual(self.task.retry_count, 1)
+        self.assertEqual(self.task.retry_count, 0)
 
         self.task.action_retry()
+        self.assertEqual(self.task.retry_count, 1)
+
         self.task.action_assign(worker)
         self.task.action_start()
         self.task.action_fail('Error 2')
+        self.assertEqual(self.task.retry_count, 1)
+
+        self.task.action_retry()
         self.assertEqual(self.task.retry_count, 2)
 
     def test_manual_retry_allowed_beyond_max(self):
@@ -126,11 +134,11 @@ class TestTaskStateTransitions(TransactionCase):
         self.task.action_assign(worker)
         self.task.action_start()
         self.task.action_fail('Error')
-        # retry_count=1, max_retries=1
-        # Manual retry should still work
+        # retry_count=0, max_retries=1 — auto-retry limit reached after 1 retry
+        # Manual retry should still work regardless of max_retries
         self.task.action_retry()
         self.assertEqual(self.task.state, 'pending')
-        # retry_count is preserved (not reset)
+        # action_retry incremented retry_count
         self.assertEqual(self.task.retry_count, 1)
 
     def test_retry_non_retriable_raises(self):

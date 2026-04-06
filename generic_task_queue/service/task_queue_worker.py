@@ -384,7 +384,6 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             'runner_id': False,
                             'task_error': False,
                             'progress': 0,
-                            'retry_count': task.retry_count + 1,
                         })
                     else:
                         task.write({
@@ -392,7 +391,6 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             'task_error': (
                                 'Task thread exited without result '
                                 'after timeout'),
-                            'retry_count': task.retry_count + 1,
                         })
             except Exception:
                 _logger.error(
@@ -503,7 +501,6 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             'task_error': (
                                 'Worker restarted during execution '
                                 '(previous run was lost)'),
-                            'retry_count': task.retry_count + 1,
                         })
         except Exception:
             _logger.error(
@@ -564,7 +561,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             Uses FOR UPDATE SKIP LOCKED to prevent multiple
             workers from retrying the same tasks simultaneously.
 
-            Only tasks with retry_count <= max_retries are selected,
+            Only tasks with retry_count < max_retries are selected,
             so permanently-exhausted tasks never consume query slots
             or acquire locks.
 
@@ -582,7 +579,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         SELECT id FROM generic_task_queue_task
                         WHERE state = 'failed'
                           AND retry_policy = 'retriable'
-                          AND retry_count <= max_retries
+                          AND retry_count < max_retries
                           AND channel IN %s
                           AND type_code IN %s
                         LIMIT 10
@@ -594,7 +591,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         SELECT id FROM generic_task_queue_task
                         WHERE state = 'failed'
                           AND retry_policy = 'retriable'
-                          AND retry_count <= max_retries
+                          AND retry_count < max_retries
                           AND channel IN %s
                         LIMIT 10
                         FOR UPDATE SKIP LOCKED

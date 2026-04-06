@@ -95,7 +95,7 @@ class TestWorkerProcessesTask(TransactionCase):
 
         self.assertEqual(task.state, 'failed')
         self.assertTrue(task.task_error)
-        self.assertEqual(task.retry_count, 1)
+        self.assertEqual(task.retry_count, 0)
 
 
 class TestBatchParentChildE2E(TransactionCase):

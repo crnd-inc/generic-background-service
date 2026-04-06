@@ -145,7 +145,7 @@ class TestEndToEndExecution(TransactionCase):
         task.action_start()
         task.action_fail('Simulated error')
         self.assertEqual(task.state, 'failed')
-        self.assertEqual(task.retry_count, 1)
+        self.assertEqual(task.retry_count, 0)
 
         # Auto-retry puts it back to pending
         task.action_retry()
@@ -197,7 +197,7 @@ class TestAutoRetry(TransactionCase):
         task.action_start()
         task.action_fail('test error')
         self.assertEqual(task.state, 'failed')
-        self.assertEqual(task.retry_count, 1)
+        self.assertEqual(task.retry_count, 0)
 
         # Simulate what the worker's _auto_retry_failed does:
         # search for failed retriable tasks

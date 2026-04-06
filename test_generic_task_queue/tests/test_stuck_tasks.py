@@ -57,7 +57,7 @@ class TestStuckStateTransitions(TransactionCase):
         self.assertEqual(self.task.task_result, {'ok': True})
 
     def test_stuck_to_failed_via_action_fail(self):
-        """stuck → failed should succeed and increment retry_count."""
+        """stuck → failed should succeed; retry_count is not incremented."""
         self.task.action_assign(self.worker)
         self.task.action_start()
         self.task.action_stuck()
@@ -66,7 +66,7 @@ class TestStuckStateTransitions(TransactionCase):
 
         self.assertEqual(self.task.state, 'failed')
         self.assertEqual(self.task.task_error, 'boom')
-        self.assertEqual(self.task.retry_count, 1)
+        self.assertEqual(self.task.retry_count, 0)
 
     def test_stuck_to_cancelled(self):
         """stuck → cancelled should succeed."""
@@ -176,7 +176,8 @@ class TestMarkDeadHandlesStuck(TransactionCase):
                          "runner_id must be cleared to invalidate zombies")
 
     def test_mark_dead_non_retriable_stuck_goes_failed(self):
-        """mark_dead on non-retriable stuck task → failed, retry_count++."""
+        """mark_dead on non-retriable stuck task → failed,
+           retry_count unchanged."""
         task = self._put_task_in_stuck('non_retriable')
         self.assertEqual(task.retry_count, 0)
 
@@ -184,8 +185,9 @@ class TestMarkDeadHandlesStuck(TransactionCase):
 
         self.assertEqual(task.state, 'failed')
         self.assertEqual(
-            task.retry_count, 1,
-            "mark_dead must increment retry_count for stuck tasks")
+            task.retry_count, 0,
+            "mark_dead must not increment retry_count (only action_retry does)"
+        )
 
     def test_mark_dead_also_handles_running(self):
         """mark_dead must still handle running (non-stuck) tasks."""
@@ -269,7 +271,6 @@ class TestOrphanCleanupOnStartup(TransactionCase):
                 task.write({
                     'state': 'failed',
                     'task_error': 'Worker restarted during execution',
-                    'retry_count': task.retry_count + 1,
                 })
 
     def test_retriable_running_goes_pending(self):
@@ -288,11 +289,12 @@ class TestOrphanCleanupOnStartup(TransactionCase):
         self.assertFalse(task.runner_id)
 
     def test_non_retriable_stuck_goes_failed(self):
-        """Orphaned non-retriable stuck task → failed, retry_count bumped."""
+        """Orphaned non-retriable stuck task → failed, retry_count unchanged.
+        """
         task = self._put_task_in_state('stuck', 'non_retriable')
         self._run_cleanup()
         self.assertEqual(task.state, 'failed')
-        self.assertEqual(task.retry_count, 1)
+        self.assertEqual(task.retry_count, 0)
 
     def test_retriable_assigned_goes_pending(self):
         """Orphaned assigned task → pending."""

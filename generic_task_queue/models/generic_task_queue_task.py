@@ -370,7 +370,6 @@ class GenericTaskQueueTask(models.Model):
             'state': 'failed',
             'task_error': error,
             'date_completed': fields.Datetime.now(),
-            'retry_count': self.retry_count + 1,
         }
         if error_data is not None:
             vals['task_error_data'] = error_data
@@ -398,15 +397,15 @@ class GenericTaskQueueTask(models.Model):
                     self.env._(
                         "Task '%(name)s' is not retriable.",
                         name=record.name))
-        vals = {
-            'state': 'pending',
-            'worker_id': False,
-            'runner_id': False,
-            'task_error': False,
-            'progress': 0,
-            'eta': eta,
-        }
-        self.sudo().write(vals)
+            record.sudo().write({
+                'state': 'pending',
+                'worker_id': False,
+                'runner_id': False,
+                'task_error': False,
+                'progress': 0,
+                'eta': eta,
+                'retry_count': record.retry_count + 1,
+            })
         self._notify_state_change()
 
     def action_cancel(self):
