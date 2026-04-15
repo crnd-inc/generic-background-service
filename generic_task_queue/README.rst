@@ -194,23 +194,23 @@ Subscribes to bus notifications for that task and triggers a
 
 Options:
 
-+------------------+-------------------------------------------------------+
-| Option           | Description                                           |
-+==================+=======================================================+
-| ``show_progress``| Show spinner + progress bar while active.             |
-|                  | Default: ``true``.                                    |
-+------------------+-------------------------------------------------------+
-| ``label``        | Text shown above the progress block while active.     |
-|                  | Defaults to task display name. Pass ``""`` to hide.   |
-+------------------+-------------------------------------------------------+
-| ``state_field``  | Field on the consumer record holding the task state.  |
-|                  | Initialises the spinner correctly when the form opens |
-|                  | mid-run (cold-start fix). Example: ``'task_state'``.  |
-+------------------+-------------------------------------------------------+
-| ``progress_field``| Field on the consumer record holding task progress.  |
-|                  | Initialises the bar position on cold open.            |
-|                  | Example: ``'task_progress'``.                         |
-+------------------+-------------------------------------------------------+
++-------------------+-------------------------------------------------------+
+| Option            | Description                                           |
++===================+=======================================================+
+| ``show_progress`` | Show spinner + progress bar while active.             |
+|                   | Default: ``true``.                                    |
++-------------------+-------------------------------------------------------+
+| ``label``         | Text shown above the progress block while active.     |
+|                   | Defaults to task display name. Pass ``""`` to hide.   |
++-------------------+-------------------------------------------------------+
+| ``state_field``   | Field on the consumer record holding the task state.  |
+|                   | Initialises the spinner correctly when the form opens |
+|                   | mid-run (cold-start fix). Example: ``'task_state'``.  |
++-------------------+-------------------------------------------------------+
+| ``progress_field``| Field on the consumer record holding task progress.   |
+|                   | Initialises the bar position on cold open.            |
+|                   | Example: ``'task_progress'``.                         |
++-------------------+-------------------------------------------------------+
 
 The widget renders nothing when the task is inactive. It is safe to leave
 it in the view at all times.
@@ -274,7 +274,7 @@ adjust its schedule from *Technical → Automation → Scheduled Actions*.
 Two `System Parameters <https://www.odoo.com/documentation/18.0/developer/reference/backend/system_parameters.html>`_
 control the behaviour:
 
-+-------------------------------------------+---------------------------+
++-------------------------------------------+----------+-----------------+
 | Key                                       | Default  | Description     |
 +===========================================+==========+=================+
 | ``generic_task_queue.vacuum_days``        | ``30``   | Delete tasks    |
@@ -282,12 +282,12 @@ control the behaviour:
 |                                           |          | than N days ago.|
 |                                           |          | Set to ``0`` to |
 |                                           |          | disable.        |
-+-------------------------------------------+---------------------------+
++-------------------------------------------+----------+-----------------+
 | ``generic_task_queue.vacuum_batch_size``  | ``1000`` | Max tasks per   |
 |                                           |          | cron run. Tune  |
 |                                           |          | upward for high-|
 |                                           |          | volume installs.|
-+-------------------------------------------+---------------------------+
++-------------------------------------------+----------+-----------------+
 
 Only root tasks are searched; child tasks are removed automatically via
 cascade delete.
