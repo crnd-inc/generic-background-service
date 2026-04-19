@@ -1,6 +1,6 @@
 {
     "name": "Generic Task Queue",
-    "version": "18.0.0.0.6",
+    "version": "18.0.0.0.7",
     "author": "Center of Research and Development",
     "website": "https://crnd.pro",
     "license": "LGPL-3",

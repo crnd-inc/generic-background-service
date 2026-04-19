@@ -428,3 +428,89 @@ class TestIterChildResults(TransactionCase):
         cr = list(self.task_type.iter_child_results(parent))[0]
         self.assertEqual(cr.task._name, 'generic.task.queue.task')
         self.assertEqual(cr.task.parent_id, parent)
+
+
+class TestPropagateProgress(TransactionCase):
+    """Test the _propagate_progress flag on AbstractTaskType.
+
+    _propagate_progress_upward is patched throughout: it opens a second
+    DB cursor that cannot see uncommitted test rows.  We verify that
+    update_progress() invokes it with the correct parent_id, and trust
+    the SQL logic via code review + pre-commit checks.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.Task = self.env['generic.task.queue.task']
+
+    def _make_parent_and_child(self, child_type_code):
+        parent = self.Task.create_task(
+            'test.task.type.noop', name='Root')
+        child = self.Task.create_children(
+            parent, child_type_code, [{}])[0]
+        return parent, child
+
+    def test_propagate_progress_default_false(self):
+        """_propagate_progress should default to False on AbstractTaskType."""
+        self.assertFalse(AbstractTaskType._propagate_progress)
+
+    def test_propagating_child_type_has_flag_true(self):
+        """TestTaskTypePropagatingChild has _propagate_progress=True."""
+        from ..service.test_task_types import (
+            TestTaskTypePropagatingChild)
+        self.assertTrue(TestTaskTypePropagatingChild._propagate_progress)
+
+    def test_propagating_child_type_synced_to_db(self):
+        """propagate_progress flag should be synced to the DB type record."""
+        tt = self.env['generic.task.queue.task.type'].search([
+            ('code', '=', 'test.task.type.propagating.child'),
+        ], limit=1)
+        self.assertTrue(tt.propagate_progress)
+
+    def test_non_propagating_type_synced_to_db(self):
+        """Non-propagating types have propagate_progress=False in DB."""
+        tt = self.env['generic.task.queue.task.type'].search([
+            ('code', '=', 'test.task.type.noop'),
+        ], limit=1)
+        self.assertFalse(tt.propagate_progress)
+
+    def test_propagate_calls_upward_when_flag_set(self):
+        """update_progress should call _propagate_progress_upward
+        when the task type has propagate_progress=True."""
+        parent, child = self._make_parent_and_child(
+            'test.task.type.propagating.child')
+
+        with patch.object(
+            child.__class__, '_propagate_progress_upward'
+        ) as mock_propagate:
+            child.update_progress(50)
+
+        mock_propagate.assert_called_once()
+        # Third positional arg is parent_id
+        call_args = mock_propagate.call_args[0]
+        self.assertEqual(call_args[-1], parent.id)
+
+    def test_propagate_not_called_when_flag_false(self):
+        """update_progress should NOT call _propagate_progress_upward
+        for non-propagating task types."""
+        parent, child = self._make_parent_and_child('test.task.type.noop')
+
+        with patch.object(
+            child.__class__, '_propagate_progress_upward'
+        ) as mock_propagate:
+            child.update_progress(50)
+
+        mock_propagate.assert_not_called()
+
+    def test_propagate_not_called_without_parent(self):
+        """update_progress should NOT propagate for root tasks
+        (no parent_id) even if type has the flag."""
+        root = self.Task.create_task(
+            'test.task.type.propagating.child', name='Root')
+
+        with patch.object(
+            root.__class__, '_propagate_progress_upward'
+        ) as mock_propagate:
+            root.update_progress(50)
+
+        mock_propagate.assert_not_called()

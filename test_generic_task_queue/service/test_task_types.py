@@ -58,6 +58,18 @@ class TestTaskTypeBatchParent(AbstractTaskType):
         }
 
 
+class TestTaskTypePropagatingChild(AbstractTaskType):
+    """Child task type that propagates its progress to the parent.
+
+    Used to test the _propagate_progress flag.
+    """
+    _name = 'test.task.type.propagating.child'
+    _propagate_progress = True
+
+    def execute(self, env, task):
+        return {}
+
+
 class TestTaskTypeBatchChild(AbstractTaskType):
     """Child task type that processes a chunk of items."""
     _name = 'test.task.type.batch.child'

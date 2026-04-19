@@ -550,6 +550,12 @@ class GenericTaskQueueTask(models.Model):
             A gtq_task_progress bus notification is sent on the same
             cursor so it fires at the same commit, keeping the
             notification in sync with the data.
+
+            If the task's type has ``propagate_progress = True`` and the
+            task has a parent, the averaged progress of all siblings is
+            written to the parent in the same cursor/commit, then the
+            propagation recurses upward until a type with
+            ``propagate_progress = False`` or a root task is reached.
         """
         value = max(0, min(100, int(value)))
         new_cr = self.pool.cursor()
@@ -572,9 +578,78 @@ class GenericTaskQueueTask(models.Model):
                         'task_id': task.id,
                         'progress': value,
                     })
+            # Propagate to parent when the task type opts in.
+            # Checked via the main-env ORM (sees own uncommitted writes).
+            # The actual SQL runs on new_cr so it commits atomically with
+            # the progress write above.
+            for task in self:
+                if task.parent_id and task.type_id.propagate_progress:
+                    self._propagate_progress_upward(
+                        new_cr, new_env, task.parent_id.id)
             new_cr.commit()
         finally:
             new_cr.close()
+
+    @api.private
+    def _propagate_progress_upward(self, new_cr, new_env, parent_id):
+        """ Average children's progress and write it to the parent task.
+
+            Runs entirely on ``new_cr`` (the cursor already open in
+            ``update_progress``) so all writes land in the same commit.
+
+            Recurses if the parent's task type also has
+            ``propagate_progress = True`` and the parent itself has a
+            parent, allowing progress to bubble up through arbitrarily
+            deep hierarchies in a single round-trip per level.
+
+            :param new_cr: open cursor (from update_progress)
+            :param new_env: Odoo environment bound to new_cr
+            :param int parent_id: ID of the parent task to update
+        """
+        # Average progress across all committed siblings.
+        # new_cr sees its own uncommitted writes (the child's just-updated
+        # progress) as well as all previously committed sibling values.
+        new_cr.execute("""
+            SELECT COALESCE(AVG(progress), 0)::int, COUNT(*)
+            FROM generic_task_queue_task
+            WHERE parent_id = %s
+        """, (parent_id,))
+        avg_progress, child_count = new_cr.fetchone()
+        if not child_count:
+            return
+
+        new_cr.execute("""
+            UPDATE generic_task_queue_task
+            SET progress = %s
+            WHERE id = %s
+        """, (avg_progress, parent_id))
+
+        # Notify the parent task's creator via bus.
+        new_cr.execute("""
+            SELECT u.partner_id
+            FROM generic_task_queue_task t
+            JOIN res_users u ON u.id = t.create_uid
+            WHERE t.id = %s
+        """, (parent_id,))
+        row = new_cr.fetchone()
+        if row and row[0]:
+            new_env['res.partner'].browse(row[0])._bus_send(
+                'gtq_task_progress', {
+                    'task_id': parent_id,
+                    'progress': avg_progress,
+                })
+
+        # Recurse if the parent's type also opts in and has its own parent.
+        new_cr.execute("""
+            SELECT tt.propagate_progress, t.parent_id
+            FROM generic_task_queue_task t
+            LEFT JOIN generic_task_queue_task_type tt
+                   ON tt.id = t.type_id
+            WHERE t.id = %s
+        """, (parent_id,))
+        row = new_cr.fetchone()
+        if row and row[0] and row[1]:
+            self._propagate_progress_upward(new_cr, new_env, row[1])
 
     @api.private
     def is_cancelled(self):

@@ -56,6 +56,14 @@ class AbstractTaskType(abc.ABC):
     # Can be overridden per-task at enqueue time via create_task().
     _max_retries = 0
 
+    # When True, update_progress() on this task automatically propagates
+    # an averaged progress value upward to the parent task, then recurses
+    # until a task type with _propagate_progress = False (or no parent)
+    # is reached.  Set on intermediate task types that form levels in a
+    # multi-level hierarchy (e.g. a "unit" task that fans out to chunks).
+    # The root task type typically leaves this False.
+    _propagate_progress = False
+
     # When True, the base on_child_done() automatically calls
     # parent_task.update_progress() each time a child completes,
     # computing progress as (terminal children / total children * 100).

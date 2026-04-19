@@ -24,6 +24,13 @@ class GenericTaskQueueTaskType(models.Model):
         default=False,
         help="If enabled, the task creator receives a toast notification "
              "when a task of this type completes or fails.")
+    propagate_progress = fields.Boolean(
+        default=False,
+        help="If enabled, calling update_progress() on a task of this type "
+             "automatically averages sibling progress and writes it to the "
+             "parent task, then recurses upward. Use on intermediate task "
+             "types in multi-level hierarchies to propagate fine-grained "
+             "progress to the root without manual on_child_done hooks.")
     default_timeout = fields.Integer(
         default=0,
         help="Default execution timeout in seconds for tasks of this type. "
@@ -73,6 +80,7 @@ class GenericTaskQueueTaskType(models.Model):
             self._sync_type(
                 code, module,
                 notify_on_completion=cls._notify_on_completion,
+                propagate_progress=cls._propagate_progress,
                 default_retry_policy=cls._retry_policy,
                 default_max_retries=cls._max_retries,
             )
@@ -80,6 +88,7 @@ class GenericTaskQueueTaskType(models.Model):
 
     @api.model
     def _sync_type(self, code, module, name=None, notify_on_completion=False,
+                   propagate_progress=False,
                    default_retry_policy='non_retriable',
                    default_max_retries=0):
         """ Create or update a task type record.
@@ -92,11 +101,13 @@ class GenericTaskQueueTaskType(models.Model):
         self.env.cr.execute("""
             INSERT INTO generic_task_queue_task_type
                 (code, module, name, active, notify_on_completion,
+                 propagate_progress,
                  default_retry_policy, default_max_retries,
                  create_uid, write_uid, create_date, write_date)
             VALUES
                 (%(code)s, %(module)s, %(name)s, true,
                  %(notify_on_completion)s,
+                 %(propagate_progress)s,
                  %(default_retry_policy)s, %(default_max_retries)s,
                  %(uid)s, %(uid)s,
                  (NOW() AT TIME ZONE 'UTC'), (NOW() AT TIME ZONE 'UTC'))
@@ -104,6 +115,7 @@ class GenericTaskQueueTaskType(models.Model):
                 module                = EXCLUDED.module,
                 active                = true,
                 notify_on_completion  = EXCLUDED.notify_on_completion,
+                propagate_progress    = EXCLUDED.propagate_progress,
                 default_retry_policy  = EXCLUDED.default_retry_policy,
                 default_max_retries   = EXCLUDED.default_max_retries,
                 write_uid             = EXCLUDED.write_uid,
@@ -113,6 +125,7 @@ class GenericTaskQueueTaskType(models.Model):
             'module': module,
             'name': name or code,
             'notify_on_completion': notify_on_completion,
+            'propagate_progress': propagate_progress,
             'default_retry_policy': default_retry_policy,
             'default_max_retries': default_max_retries,
             'uid': self.env.uid,
