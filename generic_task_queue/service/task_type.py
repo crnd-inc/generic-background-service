@@ -1,6 +1,16 @@
 import abc
+import collections
 
 from .task_type_registry import TaskTypeRegistry
+
+# Returned by iter_child_results() for each child task.
+# - result: task_result JSON (only set when state == 'done', else None)
+# - error:  task_error text  (only set when state == 'failed', else None)
+# - state:  child's final state string
+ChildResult = collections.namedtuple(
+    'ChildResult', ['task', 'result', 'error', 'state'])
+
+_TERMINAL_STATES = frozenset({'done', 'failed', 'cancelled'})
 
 
 class AbstractTaskType(abc.ABC):
@@ -45,6 +55,15 @@ class AbstractTaskType(abc.ABC):
     # After retry_count reaches this value the task stays failed.
     # Can be overridden per-task at enqueue time via create_task().
     _max_retries = 0
+
+    # When True, the base on_child_done() automatically calls
+    # parent_task.update_progress() each time a child completes,
+    # computing progress as (terminal children / total children * 100).
+    # Terminal means done, failed, or cancelled — progress reflects
+    # how much of the batch has been processed, not how much succeeded.
+    # Override on_child_done() only if you need custom logic beyond
+    # simple progress tracking.
+    _track_progress = False
 
     # Delay (in seconds) before each automatic retry attempt.
     # The key is the value of retry_count AFTER the failure
@@ -117,21 +136,85 @@ class AbstractTaskType(abc.ABC):
     def on_child_done(self, env, parent_task, child_task):
         """ Called each time a child task completes.
 
-            Override for incremental progress tracking
-            or partial result collection.
+            The default implementation fires ``update_progress()`` on the
+            parent when ``_track_progress = True``, computing progress as::
+
+                terminal_children / total_children * 100
+
+            "Terminal" means done, failed, or cancelled — so progress
+            reaches 100 % when all children have finished regardless of
+            their outcome.
+
+            Override to add custom incremental logic (e.g. partial result
+            collection). Call ``super().on_child_done(...)`` first if you
+            still want automatic progress tracking.
 
             :param env: Odoo environment
-            :param parent_task: the parent task record (in 'waiting')
+            :param parent_task: the parent task record (state 'waiting')
             :param child_task: the child task that just completed
         """
+        if not self._track_progress:
+            return
+        children = parent_task.child_ids
+        total = len(children)
+        if not total:
+            return
+        # Invalidate state cache before reading: on_child_done can be
+        # called in the same transaction that changed the child state
+        # (e.g. in tests), where different env objects share a cursor
+        # but keep separate ORM caches.  Forcing a re-read ensures we
+        # see the current DB values regardless of how the env was built.
+        children.invalidate_recordset(['state'])
+        done = sum(1 for c in children if c.state in _TERMINAL_STATES)
+        parent_task.update_progress(int(done * 100 / total))
 
     def on_all_children_done(self, env, parent_task):
         """ Called when all child tasks have completed.
 
             Override to aggregate results from children.
+            Use ``iter_child_results()`` to iterate over children without
+            manually checking states::
+
+                def on_all_children_done(self, env, parent_task):
+                    items = []
+                    for cr in self.iter_child_results(parent_task):
+                        if cr.error:
+                            continue  # skip failed children
+                        items.extend(cr.result.get('ids', []))
+                    return {'total': len(items), 'ids': items}
+
             Return value becomes the parent's task_result.
 
             :param env: Odoo environment
             :param parent_task: the parent task record
             :return: aggregated result (stored as JSON in parent)
         """
+
+    def iter_child_results(self, parent_task):
+        """ Iterate over results of all child tasks.
+
+            Yields a :class:`ChildResult` named tuple for each child:
+
+            - ``task``   — the child task record
+            - ``result`` — ``task_result`` JSON when state is ``done``,
+                           else ``None``
+            - ``error``  — ``task_error`` text when state is ``failed``,
+                           else ``None``
+            - ``state``  — the child's final state string
+
+            Typically called from :meth:`on_all_children_done`.
+
+            :param parent_task: the parent task record
+            :rtype: iterator of ChildResult
+        """
+        children = parent_task.child_ids
+        # Same cache-coherency concern as in on_child_done: invalidate
+        # result fields so we always read current DB values.
+        children.invalidate_recordset(['state', 'task_result', 'task_error'])
+        for child in children:
+            yield ChildResult(
+                task=child,
+                result=child.task_result if child.state == 'done' else None,
+                error=child.task_error if child.state == 'failed' else None,
+                state=child.state,
+            )

@@ -1,5 +1,9 @@
+from unittest.mock import patch
+
 from odoo.tests.common import TransactionCase
 from odoo import exceptions
+from odoo.addons.generic_task_queue.service.task_type import (
+    AbstractTaskType, ChildResult)
 
 
 class TestWaitingState(TransactionCase):
@@ -235,3 +239,192 @@ class TestTaskErrorData(TransactionCase):
                                 error_data=error_data)
         self.assertEqual(task.task_error_data, error_data)
         self.assertEqual(task.task_error, '2 errors occurred')
+
+
+class TestTrackProgress(TransactionCase):
+    """Test the _track_progress flag on AbstractTaskType.
+
+    update_progress() is patched throughout: it opens a second DB cursor
+    that would deadlock against the row lock held by the test transaction.
+    We test the *value* passed to update_progress, not the DB side-effect.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.Task = self.env['generic.task.queue.task']
+        self.worker = self.env['generic.task.queue.worker'].create({
+            'uuid': 'track-progress-worker',
+            'service_name': 'test.service',
+            'state': 'active',
+        })
+
+    def _make_task_type(self, track_progress):
+        class _TrackType(AbstractTaskType):
+            _name = None  # not registered — unit test only
+            _track_progress = track_progress
+
+            def execute(self, env, task):
+                return {}
+
+        return _TrackType()
+
+    def _make_waiting_parent(self, n_children):
+        parent = self.Task.create_task(
+            'test.task.type.noop', name='Progress Parent')
+        parent.sudo().action_assign(self.worker)
+        parent.sudo().action_start()
+        children = self.Task.create_children(
+            parent, 'test.task.type.noop',
+            [{'idx': i} for i in range(n_children)],
+        )
+        parent.sudo().action_wait_children()
+        return parent, children
+
+    def test_track_progress_advances_on_each_child(self):
+        """update_progress should be called with increasing value per child."""
+        parent, children = self._make_waiting_parent(4)
+        task_type = self._make_task_type(track_progress=True)
+
+        for i, child in enumerate(children):
+            child.sudo().action_assign(self.worker)
+            child.sudo().action_start()
+            child.sudo().action_done({})
+            with patch.object(
+                parent.__class__, 'update_progress'
+            ) as mock_update:
+                task_type.on_child_done(self.env, parent, child)
+            expected = int((i + 1) * 100 / 4)
+            mock_update.assert_called_once_with(expected)
+
+    def test_track_progress_false_skips_update(self):
+        """on_child_done should not call update_progress when flag is False."""
+        parent, children = self._make_waiting_parent(2)
+        task_type = self._make_task_type(track_progress=False)
+
+        child = children[0]
+        child.sudo().action_assign(self.worker)
+        child.sudo().action_start()
+        child.sudo().action_done({})
+        with patch.object(
+            parent.__class__, 'update_progress'
+        ) as mock_update:
+            task_type.on_child_done(self.env, parent, child)
+        mock_update.assert_not_called()
+
+    def test_track_progress_counts_failed_children(self):
+        """Failed children count toward progress (batch has advanced)."""
+        parent, children = self._make_waiting_parent(2)
+        task_type = self._make_task_type(track_progress=True)
+
+        child = children[0]
+        child.sudo().action_assign(self.worker)
+        child.sudo().action_start()
+        child.sudo().action_fail('boom')
+        with patch.object(
+            parent.__class__, 'update_progress'
+        ) as mock_update:
+            task_type.on_child_done(self.env, parent, child)
+        mock_update.assert_called_once_with(50)
+
+    def test_batch_parent_uses_track_progress(self):
+        """TestTaskTypeBatchParent uses _track_progress flag."""
+        from ..service.test_task_types import TestTaskTypeBatchParent
+        self.assertTrue(TestTaskTypeBatchParent._track_progress)
+
+
+class TestIterChildResults(TransactionCase):
+    """Test AbstractTaskType.iter_child_results()."""
+
+    def setUp(self):
+        super().setUp()
+        self.Task = self.env['generic.task.queue.task']
+        self.worker = self.env['generic.task.queue.worker'].create({
+            'uuid': 'iter-results-worker',
+            'service_name': 'test.service',
+            'state': 'active',
+        })
+
+        class _SimpleType(AbstractTaskType):
+            _name = None
+
+            def execute(self, env, task):
+                return {}
+
+        self.task_type = _SimpleType()
+
+    def _make_children(self, states_and_results):
+        """Create a waiting parent whose children are in given states.
+
+        states_and_results: list of
+            ('done'|'failed'|'cancelled', result_or_error)
+        """
+        parent = self.Task.create_task(
+            'test.task.type.noop', name='Iter Parent')
+        parent.sudo().action_assign(self.worker)
+        parent.sudo().action_start()
+        children = self.Task.create_children(
+            parent, 'test.task.type.noop',
+            [{'idx': i} for i in range(len(states_and_results))],
+        )
+        parent.sudo().action_wait_children()
+
+        for child, (state, payload) in zip(children, states_and_results):
+            child.sudo().action_assign(self.worker)
+            child.sudo().action_start()
+            if state == 'done':
+                child.sudo().action_done(payload)
+            elif state == 'failed':
+                child.sudo().action_fail(payload)
+            elif state == 'cancelled':
+                child.action_cancel()
+
+        return parent
+
+    def test_iter_yields_child_result_namedtuples(self):
+        """iter_child_results should yield ChildResult instances."""
+        parent = self._make_children([('done', {'x': 1})])
+        results = list(self.task_type.iter_child_results(parent))
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0], ChildResult)
+
+    def test_done_child_has_result_and_no_error(self):
+        parent = self._make_children([('done', {'value': 42})])
+        cr = list(self.task_type.iter_child_results(parent))[0]
+        self.assertEqual(cr.state, 'done')
+        self.assertEqual(cr.result, {'value': 42})
+        self.assertIsNone(cr.error)
+
+    def test_failed_child_has_error_and_no_result(self):
+        parent = self._make_children([('failed', 'something broke')])
+        cr = list(self.task_type.iter_child_results(parent))[0]
+        self.assertEqual(cr.state, 'failed')
+        self.assertIsNone(cr.result)
+        self.assertEqual(cr.error, 'something broke')
+
+    def test_cancelled_child_has_neither(self):
+        parent = self._make_children([('cancelled', None)])
+        cr = list(self.task_type.iter_child_results(parent))[0]
+        self.assertEqual(cr.state, 'cancelled')
+        self.assertIsNone(cr.result)
+        self.assertIsNone(cr.error)
+
+    def test_mixed_children(self):
+        """iter_child_results should handle mixed terminal states."""
+        parent = self._make_children([
+            ('done', {'ids': [1, 2]}),
+            ('failed', 'timeout'),
+            ('cancelled', None),
+        ])
+        results = list(self.task_type.iter_child_results(parent))
+        self.assertEqual(len(results), 3)
+        states = [cr.state for cr in results]
+        self.assertIn('done', states)
+        self.assertIn('failed', states)
+        self.assertIn('cancelled', states)
+
+    def test_task_type_field_points_to_record(self):
+        """ChildResult.task should be the child task record."""
+        parent = self._make_children([('done', {})])
+        cr = list(self.task_type.iter_child_results(parent))[0]
+        self.assertEqual(cr.task._name, 'generic.task.queue.task')
+        self.assertEqual(cr.task.parent_id, parent)

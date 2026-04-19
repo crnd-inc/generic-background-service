@@ -27,6 +27,7 @@ class TestTaskTypeBatchParent(AbstractTaskType):
     - Aggregates results
     """
     _name = 'test.task.type.batch.parent'
+    _track_progress = True
 
     _chunk_size = 2
 
@@ -46,18 +47,11 @@ class TestTaskTypeBatchParent(AbstractTaskType):
         # Transition to waiting
         task.action_wait_children()
 
-    def on_child_done(self, env, parent_task, child_task):
-        done = len(parent_task.child_ids.filtered(
-            lambda c: c.state == 'done'))
-        total = len(parent_task.child_ids)
-        if total:
-            parent_task.update_progress(int(done * 100 / total))
-
     def on_all_children_done(self, env, parent_task):
         all_results = []
-        for child in parent_task.child_ids:
-            r = child.task_result or {}
-            all_results.extend(r.get('processed', []))
+        for cr in self.iter_child_results(parent_task):
+            if cr.result:
+                all_results.extend(cr.result.get('processed', []))
         return {
             'total_processed': len(all_results),
             'items': all_results,
