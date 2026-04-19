@@ -6,6 +6,8 @@ import threading
 import uuid
 from datetime import datetime, timedelta
 
+import psycopg2.errors
+
 from odoo import exceptions as odoo_exceptions
 
 from odoo.addons.generic_background_service import (
@@ -517,18 +519,44 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             that worker restarts or after orphan cleanup clears worker_id.
             Concurrency is handled inside _check_waiting_parent() via
             SELECT FOR UPDATE SKIP LOCKED.
+
+            Each task is processed in its own transaction so that a
+            failure (or concurrent-update skip) for one task does not
+            abort the check for the remaining waiting tasks.
         """
+        # Step 1: collect IDs in a short read-only transaction.
+        waiting_ids = []
         try:
             with self.with_env() as env:
-                Task = env['generic.task.queue.task']
-                waiting = Task.search([
+                waiting_ids = env['generic.task.queue.task'].search([
                     ('state', '=', 'waiting'),
-                ], limit=10)
-                for task in waiting:
-                    task._check_waiting_parent()
+                ], limit=10).ids
         except Exception:
             _logger.error(
-                "Error checking waiting parents", exc_info=True)
+                "Error searching for waiting parents", exc_info=True)
+            return
+
+        # Step 2: process each task in its own transaction.
+        for task_id in waiting_ids:
+            try:
+                with self.with_env() as env:
+                    env['generic.task.queue.task'].browse(
+                        task_id)._check_waiting_parent()
+            except psycopg2.errors.SerializationFailure:
+                # SELECT FOR UPDATE SKIP LOCKED raises SerializationFailure
+                # when another transaction is mid-UPDATE on the same row
+                # (distinct from the normal "row locked → skip" path).
+                # This is benign: the concurrent transaction is completing
+                # the parent; we will pick it up on the next poll cycle
+                # if still needed.
+                _logger.debug(
+                    "Skipped waiting parent check for task %d "
+                    "(concurrent update in progress, will retry)",
+                    task_id)
+            except Exception:
+                _logger.error(
+                    "Error checking waiting parent %d",
+                    task_id, exc_info=True)
 
     def _notify_parent_on_child_done(self, child_task_id):
         """ Notify parent task that a child has completed.
