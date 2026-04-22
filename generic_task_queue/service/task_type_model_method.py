@@ -21,6 +21,7 @@ class ModelMethodTaskType(AbstractTaskType):
         as a background task without writing a custom task type.
     """
     _name = 'task.type.model.method'
+    _singleton = False  # parallel runs are fine; use unique_key to deduplicate
     _retry_policy = 'non_retriable'
     _max_retries = 0
 

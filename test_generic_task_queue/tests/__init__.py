@@ -11,4 +11,5 @@ from . import (  # noqa: F401
     test_stuck_tasks,
     test_auto_retry,
     test_gc_tasks,
+    test_unique_key,
 )

@@ -28,7 +28,11 @@ Key features:
 - **Atomic task claiming** -- uses ``SELECT ... FOR UPDATE SKIP LOCKED``
   to prevent race conditions between concurrent workers
 - **Parallel execution** -- workers can run multiple tasks simultaneously
-  (configurable ``_max_parallel_jobs``)
+  (configurable ``_max_parallel_jobs``, overridable in ``odoo.conf``)
+- **Singleton execution guard** -- ``_singleton = True`` on a task type
+  prevents a second instance from running while one is already executing
+- **Deduplication guard** -- pass ``unique_key=`` to ``create_task()`` to
+  silently reuse or raise when the same logical task is already active
 - **Progress tracking** -- task types report progress (0-100) visible in UI
   with real-time updates via bus notifications
 - **Cooperative cancellation** -- cancel running tasks from the UI;
@@ -155,6 +159,54 @@ create a separate service. Just define the class and create tasks.
             return {'total': len(results), 'ids': results}
 
 
+Deduplication and singleton execution
+=====================================
+
+**unique_key — prevent duplicate tasks**
+
+Pass ``unique_key=`` to ``create_task()`` to guard against enqueueing the
+same logical task twice while one is already active (pending, assigned,
+running, stuck, or waiting):
+
+.. code-block:: python
+
+    env['generic.task.queue.task'].create_task(
+        'my.module.sync.products',
+        unique_key='rozetka-sync-%d' % product.id,
+        # on_conflict='reuse-running'  ← default: return the existing task
+        # on_conflict='raise'          ← raise AlreadyScheduledException
+    )
+
+- ``on_conflict='reuse-running'`` (default) — returns the existing active
+  task without creating a new one.
+- ``on_conflict='raise'`` — raises ``AlreadyScheduledException``; the
+  exception carries the conflicting task in ``.task``.
+
+Once the task reaches a terminal state (done, failed, cancelled) the key
+is released and the same key can be used again.
+
+**_singleton — prevent parallel execution**
+
+Set ``_singleton = True`` on a task type to ensure at most one task of that
+type is in the ``assigned`` or ``running`` state cluster-wide. The worker
+skips claiming a new task of that type while another is already executing.
+
+``_singleton = True`` is the **default** for all custom task types — safe
+for tasks that must not overlap (bulk data fetch, report generation, etc.).
+
+To allow parallel execution, explicitly opt out:
+
+.. code-block:: python
+
+    class ProcessChunkTaskType(AbstractTaskType):
+        _name = 'my.module.process.chunk'
+        _singleton = False  # chunks are independent, run them in parallel
+
+``task.type.model.method`` (the built-in generic task type) also has
+``_singleton = False`` — parallel execution is safe because deduplication
+is controlled per-enqueue via ``unique_key``.
+
+
 Real-time UI widgets
 ====================
 
@@ -242,6 +294,21 @@ Modules that define ``@background_task`` methods or custom task types
 just need ``generic_task_queue`` in their ``depends`` -- no
 ``server_wide_modules`` entry required. Task types are auto-discovered
 and registered in each database where the module is installed.
+
+**Tuning parallel jobs via odoo.conf:**
+
+``_max_parallel_jobs`` can be overridden per deployment without changing
+code by adding a ``[generic_task_queue]`` section to ``odoo.conf``.
+The key is ``{service_name}_max_parallel_jobs`` with dots replaced by
+underscores:
+
+.. code-block:: ini
+
+    [generic_task_queue]
+    # Default service
+    generic_task_queue_service_max_parallel_jobs = 4
+    # Custom service
+    my_heavy_task_service_max_parallel_jobs = 2
 
 **When you need a separate service (rare):**
 

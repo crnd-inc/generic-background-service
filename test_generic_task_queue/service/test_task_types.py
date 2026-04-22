@@ -4,6 +4,7 @@ from odoo.addons.generic_task_queue import AbstractTaskType
 class TestTaskTypeNoOp(AbstractTaskType):
     """Task type that does nothing. For registry tests."""
     _name = 'test.task.type.noop'
+    _singleton = False
 
     def execute(self, env, task):
         return {'status': 'noop'}
@@ -12,6 +13,7 @@ class TestTaskTypeNoOp(AbstractTaskType):
 class TestTaskTypeEcho(AbstractTaskType):
     """Task type that returns its params back. For testing."""
     _name = 'test.task.type.echo'
+    _singleton = False
 
     def execute(self, env, task):
         return task.task_params
@@ -27,6 +29,7 @@ class TestTaskTypeBatchParent(AbstractTaskType):
     - Aggregates results
     """
     _name = 'test.task.type.batch.parent'
+    _singleton = False
     _track_progress = True
 
     _chunk_size = 2
@@ -64,6 +67,7 @@ class TestTaskTypePropagatingChild(AbstractTaskType):
     Used to test the _propagate_progress flag.
     """
     _name = 'test.task.type.propagating.child'
+    _singleton = False
     _propagate_progress = True
 
     def execute(self, env, task):
@@ -73,6 +77,7 @@ class TestTaskTypePropagatingChild(AbstractTaskType):
 class TestTaskTypeBatchChild(AbstractTaskType):
     """Child task type that processes a chunk of items."""
     _name = 'test.task.type.batch.child'
+    _singleton = False
 
     def execute(self, env, task):
         items = task.task_params.get('items', [])

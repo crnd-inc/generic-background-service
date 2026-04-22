@@ -56,6 +56,15 @@ class AbstractTaskType(abc.ABC):
     # Can be overridden per-task at enqueue time via create_task().
     _max_retries = 0
 
+    # When True, at most one task of this type may be in the 'assigned' or
+    # 'running' state cluster-wide at any time.  The worker skips claiming
+    # a new task of this type while another is already executing.
+    # Default True — safe for most task types that must not overlap.
+    # Set to False for task types that are explicitly designed to run in
+    # parallel (e.g. task.type.model.method, where uniqueness is controlled
+    # per-enqueue via unique_key).
+    _singleton = True
+
     # When True, update_progress() on this task automatically propagates
     # an averaged progress value upward to the parent task, then recurses
     # until a task type with _propagate_progress = False (or no parent)

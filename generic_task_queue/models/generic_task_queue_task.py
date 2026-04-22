@@ -2,7 +2,11 @@ import logging
 import uuid as _uuid_module
 from datetime import timedelta
 
+import psycopg2.errors
+
 from odoo import models, fields, api, exceptions
+
+from ..exceptions import AlreadyScheduledException
 
 _logger = logging.getLogger(__name__)
 
@@ -49,13 +53,21 @@ class GenericTaskQueueTask(models.Model):
     _order = 'priority, date_created'
 
     def init(self):
-        """ Create partial composite index for claim_task query. """
+        """ Create partial indexes for claim_task and unique_key. """
         self.env.cr.execute("""
             CREATE INDEX IF NOT EXISTS
                 generic_task_queue_task_claim_idx
             ON generic_task_queue_task
                 (priority, date_created)
             WHERE state = 'pending'
+        """)
+        self.env.cr.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS
+                generic_task_queue_task_unique_key_active_uniq
+            ON generic_task_queue_task (unique_key)
+            WHERE state IN (
+                'pending', 'assigned', 'running', 'stuck', 'waiting'
+            ) AND unique_key IS NOT NULL
         """)
 
     def _bus_channel(self):
@@ -179,6 +191,13 @@ class GenericTaskQueueTask(models.Model):
         index=True, readonly=True)
     date_started = fields.Datetime(readonly=True)
     date_completed = fields.Datetime(readonly=True)
+    unique_key = fields.Char(
+        index=True, readonly=True,
+        help="Idempotency key. When set, only one task with this key "
+             "may be active at a time. Pass on_conflict='reuse-running' "
+             "(default) to get back the existing task, or "
+             "on_conflict='raise' to raise AlreadyScheduledException."
+    )
 
     # Fields that regular users are allowed to modify.
     # All other fields require sudo (system) access.
@@ -675,7 +694,8 @@ class GenericTaskQueueTask(models.Model):
 
     @api.private
     @api.model
-    def claim_task(self, worker, channels, task_types, limit=1):
+    def claim_task(self, worker, channels, task_types,
+                   singleton_types=None, limit=1):
         """ Atomically claim pending tasks for a worker.
 
             Uses SELECT ... FOR UPDATE SKIP LOCKED to prevent
@@ -684,6 +704,11 @@ class GenericTaskQueueTask(models.Model):
             :param worker: generic.task.queue.worker record
             :param list channels: channels this worker handles
             :param list task_types: task type codes this worker handles
+                (empty = all types)
+            :param frozenset singleton_types: type codes that may have at
+                most one assigned/running task cluster-wide; tasks of these
+                types are skipped when another task of the same type is
+                already executing
             :param int limit: max number of tasks to claim
             :return: recordset of claimed tasks
         """
@@ -692,31 +717,42 @@ class GenericTaskQueueTask(models.Model):
         # Flush pending ORM writes so raw SQL sees current state
         self.flush_model()
 
-        # Build query — skip type filter if task_types is empty
-        # (empty means "all types")
-        if task_types:
-            self.env.cr.execute("""
-                SELECT id FROM generic_task_queue_task
-                WHERE state = 'pending'
-                  AND channel IN %s
-                  AND type_code IN %s
-                  AND (eta IS NULL
-                       OR eta <= (NOW() AT TIME ZONE 'UTC'))
-                ORDER BY priority, date_created
-                LIMIT %s
-                FOR UPDATE SKIP LOCKED
-            """, (tuple(channels), tuple(task_types), limit))
-        else:
-            self.env.cr.execute("""
-                SELECT id FROM generic_task_queue_task
-                WHERE state = 'pending'
-                  AND channel IN %s
-                  AND (eta IS NULL
-                       OR eta <= (NOW() AT TIME ZONE 'UTC'))
-                ORDER BY priority, date_created
-                LIMIT %s
-                FOR UPDATE SKIP LOCKED
-            """, (tuple(channels), limit))
+        # NULL sentinels allow a single static query for both cases:
+        #   type_filter=None  → (%s IS NULL) short-circuits → accept all types
+        #   type_filter=[...] → filter by type_code = ANY(array)
+        #   singleton_filter=None  → (%s IS NULL) → singleton clause is no-op
+        #   singleton_filter=[...] → enforce NOT EXISTS guard
+        type_filter = list(task_types) if task_types else None
+        singleton_filter = (
+            list(singleton_types) if singleton_types else None)
+
+        self.env.cr.execute(
+            """
+            SELECT id FROM generic_task_queue_task
+            WHERE state = 'pending'
+              AND channel = ANY(%s)
+              AND (%s IS NULL OR type_code = ANY(%s))
+              AND (eta IS NULL OR eta <= (NOW() AT TIME ZONE 'UTC'))
+              AND (
+                  %s IS NULL
+                  OR NOT (type_code = ANY(%s))
+                  OR NOT EXISTS (
+                      SELECT 1 FROM generic_task_queue_task t2
+                      WHERE t2.type_code = generic_task_queue_task.type_code
+                        AND t2.state IN ('assigned', 'running')
+                  )
+              )
+            ORDER BY priority, date_created
+            LIMIT %s
+            FOR UPDATE SKIP LOCKED
+            """,
+            (
+                list(channels),
+                type_filter, type_filter,
+                singleton_filter, singleton_filter,
+                limit,
+            )
+        )
         task_ids = [r[0] for r in self.env.cr.fetchall()]
         if task_ids:
             tasks = self.browse(task_ids)
@@ -732,7 +768,8 @@ class GenericTaskQueueTask(models.Model):
     def create_task(self, type_code, name=None, params=None,
                     channel='default', priority=5, eta=None,
                     timeout=0, parent_id=None,
-                    retry_policy=None, max_retries=None):
+                    retry_policy=None, max_retries=None,
+                    unique_key=None, on_conflict='reuse-running'):
         """ Convenience method to create a task.
 
             Usage::
@@ -761,6 +798,12 @@ class GenericTaskQueueTask(models.Model):
                 Defaults to the task type's ``_retry_policy`` class attribute.
             :param int max_retries: max retry count.
                 Defaults to the task type's ``_max_retries`` class attribute.
+            :param str unique_key: idempotency key. When set, only one task
+                with this key may be active at a time.
+            :param str on_conflict: what to do when a task with the same
+                unique_key is already active. ``'reuse-running'`` (default)
+                returns the existing task; ``'raise'`` raises
+                ``AlreadyScheduledException``.
             :return: created task record
         """
         if retry_policy is None or max_retries is None:
@@ -792,7 +835,50 @@ class GenericTaskQueueTask(models.Model):
             vals['eta'] = eta
         if parent_id:
             vals['parent_id'] = parent_id
-        return self.create(vals)
+        if not unique_key:
+            return self.create(vals)
+
+        vals['unique_key'] = unique_key
+
+        # Fast path: existing active task with this key.
+        # FOR UPDATE serialises against a concurrent transaction that may
+        # be in the middle of creating the same key.
+        self.flush_model()
+        self.env.cr.execute(
+            "SELECT id FROM generic_task_queue_task "
+            "WHERE unique_key = %s AND state IN %s "
+            "FOR UPDATE",
+            (unique_key, tuple(ACTIVE_STATES))
+        )
+        row = self.env.cr.fetchone()
+        if row:
+            existing = self.browse(row[0])
+            if on_conflict == 'raise':
+                raise AlreadyScheduledException(existing)
+            return existing
+
+        # No active task found — create one. Use a savepoint (flush=False,
+        # to avoid wiping the ORM cache on rollback) so that a concurrent
+        # INSERT that beats us to the partial unique index is handled
+        # gracefully rather than aborting the whole transaction.
+        try:
+            with self.env.cr.savepoint(flush=False):
+                return self.create(vals)
+        except psycopg2.errors.UniqueViolation:
+            # Another transaction inserted the same unique_key between our
+            # SELECT and our INSERT. Find the winner and apply the policy.
+            self.env.cr.execute(
+                "SELECT id FROM generic_task_queue_task "
+                "WHERE unique_key = %s AND state IN %s",
+                (unique_key, tuple(ACTIVE_STATES))
+            )
+            row = self.env.cr.fetchone()
+            if row:
+                existing = self.browse(row[0])
+                if on_conflict == 'raise':
+                    raise AlreadyScheduledException(existing)
+                return existing
+            raise  # unexpected — re-raise original UniqueViolation
 
     @api.model
     def _gc_tasks(self):

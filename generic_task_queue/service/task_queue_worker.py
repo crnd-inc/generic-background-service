@@ -193,6 +193,15 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 "Error sending heartbeat for worker %s",
                 self._worker_uuid, exc_info=True)
 
+    @staticmethod
+    def _get_singleton_types():
+        """ Return set of type codes that have _singleton = True. """
+        return frozenset(
+            name
+            for name, cls in TaskTypeRegistry.get_initialized_types().items()
+            if getattr(cls, '_singleton', False)
+        )
+
     def _claim_and_spawn(self, limit):
         task_data = []
         try:
@@ -202,6 +211,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 Task = env['generic.task.queue.task']
                 tasks = Task.claim_task(
                     worker, self._channels, self._task_types,
+                    singleton_types=self._get_singleton_types(),
                     limit=limit)
                 # Read all task data before leaving the transaction.
                 # Resolve timeout here: task → type default → worker default.

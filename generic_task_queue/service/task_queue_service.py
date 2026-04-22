@@ -7,6 +7,24 @@ from .task_queue_worker import TaskQueueWorker
 _logger = logging.getLogger(__name__)
 
 
+def _get_task_queue_config():
+    """Read the ``[generic_task_queue]`` section from ``odoo.conf``.
+
+    Example ``odoo.conf`` section::
+
+        [generic_task_queue]
+        # Parallel jobs for the default service (default: 1).
+        generic_task_queue_service_max_parallel_jobs = 4
+        # Parallel jobs for a custom service.
+        my_heavy_task_service_max_parallel_jobs = 2
+
+    Keys follow the pattern ``{service_name}_max_parallel_jobs``
+    with dots in the service name replaced by underscores.
+    """
+    from odoo.tools import config as odoo_config
+    return odoo_config.misc.get('generic_task_queue', {})
+
+
 class TaskQueueService(BackgroundService):
     """ Background service that processes tasks from the queue.
 
@@ -22,6 +40,14 @@ class TaskQueueService(BackgroundService):
                 _task_types = ['task.type.convert.video']
                 _channels = ['heavy']
                 _max_parallel_jobs = 2
+
+        ``_max_parallel_jobs`` can also be overridden per deployment via
+        the ``[generic_task_queue]`` section in ``odoo.conf``::
+
+            [generic_task_queue]
+            my_heavy_task_service_max_parallel_jobs = 4
+
+        (Replace dots in the service name with underscores.)
     """
     _name = 'generic.task.queue.service'
     _require_module = 'generic_task_queue'
@@ -56,6 +82,25 @@ class TaskQueueService(BackgroundService):
             self.name, self._die_on_stuck_timeout)
         self.request_hard_reload()
 
+    def _get_max_parallel_jobs(self):
+        """ Return max_parallel_jobs, with ``odoo.conf`` override.
+
+            Reads from the ``[generic_task_queue]`` section.
+            Key: ``{service_name}_max_parallel_jobs``
+            (dots replaced with underscores).
+        """
+        key = '%s_max_parallel_jobs' % self._name.replace('.', '_')
+        raw = _get_task_queue_config().get(key)
+        if raw is not None:
+            try:
+                return int(raw)
+            except (ValueError, TypeError):
+                _logger.warning(
+                    "Invalid value for [generic_task_queue].%s: %r"
+                    " — falling back to _max_parallel_jobs=%d",
+                    key, raw, self._max_parallel_jobs)
+        return self._max_parallel_jobs
+
     def get_worker_class(self):
         return TaskQueueWorker
 
@@ -63,6 +108,6 @@ class TaskQueueService(BackgroundService):
         return {
             'task_types': self._task_types,  # empty = all types
             'channels': self._channels,
-            'max_parallel_jobs': self._max_parallel_jobs,
+            'max_parallel_jobs': self._get_max_parallel_jobs(),
             'default_task_timeout': self._default_task_timeout,
         }
