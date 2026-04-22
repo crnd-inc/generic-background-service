@@ -203,6 +203,52 @@ class TestParentWaitsForChildren(TransactionCase):
         parent.sudo()._check_waiting_parent()
         self.assertEqual(parent.state, 'failed')
 
+    def test_parent_stays_waiting_when_retriable_child_has_retries(self):
+        """Parent stays 'waiting' when a retriable child failed
+        but still has retry attempts remaining (retry_count < max_retries)."""
+        parent, children = self._make_waiting_parent_with_children(2)
+
+        children[0].sudo().action_assign(self.worker)
+        children[0].sudo().action_start()
+        children[0].sudo().action_done({'ok': True})
+
+        # Child 1 is retriable with retries left
+        children[1].sudo().write({
+            'retry_policy': 'retriable',
+            'max_retries': 3,
+            'retry_count': 0,
+        })
+        children[1].sudo().action_assign(self.worker)
+        children[1].sudo().action_start()
+        children[1].sudo().action_fail('transient error')
+        # retry_count=0 < max_retries=3 → still retriable, parent should wait
+
+        parent.sudo()._check_waiting_parent()
+        self.assertEqual(parent.state, 'waiting')
+
+    def test_parent_fails_when_retriable_child_exhausts_retries(self):
+        """Parent fails when a retriable child has used all retry attempts
+        (retry_count >= max_retries)."""
+        parent, children = self._make_waiting_parent_with_children(2)
+
+        children[0].sudo().action_assign(self.worker)
+        children[0].sudo().action_start()
+        children[0].sudo().action_done({'ok': True})
+
+        # Child 1 is retriable but retries are exhausted
+        children[1].sudo().write({
+            'retry_policy': 'retriable',
+            'max_retries': 2,
+            'retry_count': 2,
+        })
+        children[1].sudo().action_assign(self.worker)
+        children[1].sudo().action_start()
+        children[1].sudo().action_fail('still failing after retries')
+        # retry_count=2 == max_retries=2 → exhausted → parent must fail
+
+        parent.sudo()._check_waiting_parent()
+        self.assertEqual(parent.state, 'failed')
+
 
 class TestTaskErrorData(TransactionCase):
     """Test the task_error_data JSON field."""

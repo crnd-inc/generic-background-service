@@ -10,4 +10,5 @@ from . import (  # noqa: F401
     test_worker_integration,
     test_stuck_tasks,
     test_auto_retry,
+    test_gc_tasks,
 )

@@ -103,6 +103,8 @@ class TestTaskStateTransitions(TransactionCase):
         self.assertEqual(self.task.state, 'pending')
         self.assertFalse(self.task.worker_id)
         self.assertFalse(self.task.task_error)
+        self.assertEqual(self.task.retry_count, 1)
+        self.assertEqual(self.task.progress, 0)
 
     def test_retry_increments_count(self):
         """Each action_retry() should increment retry_count;

@@ -146,6 +146,7 @@ class TestAutoRetryBoundary(TransactionCase):
         self._apply_auto_retry_logic(task)
 
         self.assertEqual(task.state, 'pending')
+        self.assertEqual(task.retry_count, 1)
 
     def test_retry_count_one_below_max_retries_is_retried(self):
         """retry_count=2, max_retries=3 → last auto-retry is still allowed
@@ -157,6 +158,7 @@ class TestAutoRetryBoundary(TransactionCase):
         self._apply_auto_retry_logic(task)
 
         self.assertEqual(task.state, 'pending')
+        self.assertEqual(task.retry_count, 3)
 
     def test_retry_count_equal_max_retries_is_not_retried(self):
         """retry_count=3, max_retries=3 → task stays failed

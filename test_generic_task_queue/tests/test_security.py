@@ -1,9 +1,13 @@
+from contextlib import contextmanager
+from unittest.mock import patch
+
 from odoo.tests.common import TransactionCase
 from odoo import exceptions
 
 from odoo.addons.generic_task_queue.service.task_type_registry import (
     TaskTypeRegistry,
 )
+from odoo.addons.generic_task_queue.service.task_type import AbstractTaskType
 
 
 class TestTaskExecutionContext(TransactionCase):
@@ -67,6 +71,50 @@ class TestTaskExecutionContext(TransactionCase):
         # The method ran successfully in user context
         target.invalidate_recordset()
         self.assertEqual(target.value, 1)
+
+    def test_worker_executes_task_as_creating_user(self):
+        """_task_thread_target passes the creating user's env to execute(),
+        not the admin/superuser env.  Goes through the real worker code path
+        rather than constructing user_env manually."""
+        from odoo.addons.generic_task_queue.service.task_queue_worker import (
+            TaskQueueWorker,
+        )
+
+        # Create task as non-admin user
+        task = self.env['generic.task.queue.task'].with_user(
+            self.test_user
+        ).create_task('test.task.type.noop', name='uid-check via worker')
+        self.assertEqual(task.create_uid, self.test_user)
+        task.sudo().action_assign(self.worker)
+
+        captured_uid = []
+
+        class _CapturingType(AbstractTaskType):
+            _name = None  # not registered — test-only
+
+            def execute(self, env, task):
+                captured_uid.append(env.uid)
+                return {}
+
+        # Build a minimal TaskQueueWorker that reuses the test cursor.
+        tq_worker = TaskQueueWorker.__new__(TaskQueueWorker)
+        tq_worker._worker_uuid = 'security-test-tqw'
+        tq_worker._worker_record_id = self.worker.id
+        test_env = self.env
+
+        @contextmanager
+        def _fake_with_env():
+            yield test_env
+
+        tq_worker.with_env = _fake_with_env
+
+        with patch.object(TaskTypeRegistry, 'get_task_type',
+                          return_value=_CapturingType):
+            tq_worker._task_thread_target(task.id, None)
+
+        self.assertTrue(captured_uid, "execute() was never called")
+        self.assertEqual(captured_uid[0], self.test_user.id,
+                         "execute() must receive the creating user's env")
 
 
 class TestProtectedTaskFields(TransactionCase):

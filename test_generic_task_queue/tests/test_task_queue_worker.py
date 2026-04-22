@@ -8,6 +8,29 @@ from odoo.addons.generic_task_queue.service.task_type_registry import (
 class TestWorkerModel(TransactionCase):
     """Test the generic.task.queue.worker model."""
 
+    def test_worker_name_computed(self):
+        """name should be '{service_name} @ {hostname}' and recompute
+        when either field changes."""
+        Worker = self.env['generic.task.queue.worker']
+        w = Worker.create({
+            'uuid': 'name-test-1',
+            'service_name': 'my.service',
+            'hostname': 'myhost',
+        })
+        self.assertEqual(w.name, 'my.service @ myhost')
+
+        w.write({'service_name': 'other.service'})
+        self.assertEqual(w.name, 'other.service @ myhost')
+
+        w.write({'hostname': 'newhost'})
+        self.assertEqual(w.name, 'other.service @ newhost')
+
+    def test_worker_name_unknown_fallback(self):
+        """name falls back to 'unknown' when service_name or hostname unset."""
+        Worker = self.env['generic.task.queue.worker']
+        w = Worker.create({'uuid': 'name-test-fallback'})
+        self.assertEqual(w.name, 'unknown @ unknown')
+
     def test_find_or_create_new(self):
         """find_or_create should create a new record."""
         Worker = self.env['generic.task.queue.worker']
@@ -219,12 +242,16 @@ class TestTimeoutResolutionChain(TransactionCase):
         """
         self.assertEqual(self._resolve(0, 0, 3600), 3600)
 
-    def test_explicit_zero_on_type_bypasses_service_default(self):
-        """Task type setting default_timeout=0 opts out of service default."""
-        # type_timeout=0 falls through to service default — this is by design.
-        # To opt out of all timeouts, the task type must set 0 AND the service
-        # must set _default_task_timeout=0.  A task type alone cannot override
-        # the service-level safety net; that requires service configuration.
+    def test_type_zero_falls_through_to_service_default(self):
+        """type_timeout=0 does NOT bypass the service default — it falls
+        through to it.  A task type alone cannot opt out of the service-level
+        safety net; the service must also set _default_task_timeout=0.
+        """
+        self.assertEqual(self._resolve(0, 0, 3600), 3600)
+
+    def test_both_zero_opts_out_of_all_timeouts(self):
+        """Only when BOTH type default and service default are 0 does the
+        resolution chain produce 0 (no timeout at all)."""
         self.assertEqual(self._resolve(0, 0, 0), 0)
 
     def test_task_queue_service_default_is_3600(self):
