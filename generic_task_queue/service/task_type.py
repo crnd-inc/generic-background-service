@@ -56,6 +56,14 @@ class AbstractTaskType(abc.ABC):
     # Can be overridden per-task at enqueue time via create_task().
     _max_retries = 0
 
+    # Service affinity. When set, only the TaskQueueService with this _name
+    # may claim tasks of this type. None means any service may claim it.
+    _service_name = None
+
+    # Default channel used by create_task() when no channel is passed.
+    # Keeps routing self-describing at the task type level.
+    _default_channel = 'default'
+
     # When True, at most one task of this type may be in the 'assigned' or
     # 'running' state cluster-wide at any time.  The worker skips claiming
     # a new task of this type while another is already executing.

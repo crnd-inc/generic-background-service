@@ -106,6 +106,7 @@ class TaskQueueService(BackgroundService):
 
     def get_worker_params(self):
         return {
+            'service_name': self._name,
             'task_types': self._task_types,  # empty = all types
             'channels': self._channels,
             'max_parallel_jobs': self._get_max_parallel_jobs(),

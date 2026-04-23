@@ -12,4 +12,5 @@ from . import (  # noqa: F401
     test_auto_retry,
     test_gc_tasks,
     test_unique_key,
+    test_routing,
 )

@@ -766,7 +766,7 @@ class GenericTaskQueueTask(models.Model):
 
     @api.model
     def create_task(self, type_code, name=None, params=None,
-                    channel='default', priority=5, eta=None,
+                    channel=None, priority=5, eta=None,
                     timeout=0, parent_id=None,
                     retry_policy=None, max_retries=None,
                     unique_key=None, on_conflict='reuse-running'):
@@ -789,7 +789,8 @@ class GenericTaskQueueTask(models.Model):
             :param str type_code: task type dotted name
             :param str name: task description (auto-generated if omitted)
             :param dict params: task parameters (JSON-serializable)
-            :param str channel: routing channel
+            :param str channel: routing channel. When omitted, falls back to
+                the task type's ``_default_channel`` (default: ``'default'``).
             :param int priority: 0 = highest
             :param datetime eta: earliest execution time
             :param int timeout: max execution seconds (0 = no limit)
@@ -806,7 +807,7 @@ class GenericTaskQueueTask(models.Model):
                 ``AlreadyScheduledException``.
             :return: created task record
         """
-        if retry_policy is None or max_retries is None:
+        if retry_policy is None or max_retries is None or channel is None:
             from ..service.task_type_registry import TaskTypeRegistry
             try:
                 cls = TaskTypeRegistry().get_task_type(type_code)
@@ -814,11 +815,15 @@ class GenericTaskQueueTask(models.Model):
                     retry_policy = cls._retry_policy
                 if max_retries is None:
                     max_retries = cls._max_retries
+                if channel is None:
+                    channel = cls._default_channel
             except KeyError:
                 if retry_policy is None:
                     retry_policy = 'non_retriable'
                 if max_retries is None:
                     max_retries = 0
+                if channel is None:
+                    channel = 'default'
         if name is None:
             name = type_code
         vals = {

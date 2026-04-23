@@ -84,3 +84,47 @@ class TestTaskTypeBatchChild(AbstractTaskType):
         # Simulate processing: double each item
         processed = [i * 2 for i in items]
         return {'processed': processed}
+
+
+class TestRoutingAnyServiceType(AbstractTaskType):
+    """Routing test: claimable by any service (_service_name=None)."""
+    _name = 'test.routing.any.service'
+    _service_name = None
+    _singleton = False
+    _default_channel = 'default'
+
+    def execute(self, env, task):
+        return {}
+
+
+class TestRoutingSpecificServiceType(AbstractTaskType):
+    """Routing test: locked to 'my.specific.service'."""
+    _name = 'test.routing.specific.service'
+    _service_name = 'my.specific.service'
+    _singleton = False
+    _default_channel = 'specific'
+
+    def execute(self, env, task):
+        return {}
+
+
+class TestRoutingOtherServiceType(AbstractTaskType):
+    """Routing test: locked to 'other.service'."""
+    _name = 'test.routing.other.service'
+    _service_name = 'other.service'
+    _singleton = False
+    _default_channel = 'other'
+
+    def execute(self, env, task):
+        return {}
+
+
+class TestRoutingCustomChannelType(AbstractTaskType):
+    """Routing test: custom _default_channel='heavy'."""
+    _name = 'test.routing.custom.channel'
+    _service_name = None
+    _singleton = False
+    _default_channel = 'heavy'
+
+    def execute(self, env, task):
+        return {}

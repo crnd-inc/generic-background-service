@@ -47,6 +47,15 @@ class GenericTaskQueueTaskType(models.Model):
         help="Default maximum automatic retries defined in code by the "
              "task type. Override per-task at enqueue time via create_task()."
     )
+    service_name = fields.Char(
+        readonly=True,
+        help="Service that exclusively handles this task type. "
+             "Empty means any service may claim it.")
+    default_channel = fields.Char(
+        readonly=True,
+        default='default',
+        help="Default channel used when enqueueing tasks of this type "
+             "without an explicit channel argument.")
 
     _sql_constraints = [
         ('code_uniq', 'UNIQUE (code)',
@@ -83,6 +92,8 @@ class GenericTaskQueueTaskType(models.Model):
                 propagate_progress=cls._propagate_progress,
                 default_retry_policy=cls._retry_policy,
                 default_max_retries=cls._max_retries,
+                service_name=cls._service_name or '',
+                default_channel=cls._default_channel or 'default',
             )
         self.invalidate_model()
 
@@ -90,7 +101,9 @@ class GenericTaskQueueTaskType(models.Model):
     def _sync_type(self, code, module, name=None, notify_on_completion=False,
                    propagate_progress=False,
                    default_retry_policy='non_retriable',
-                   default_max_retries=0):
+                   default_max_retries=0,
+                   service_name='',
+                   default_channel='default'):
         """ Create or update a task type record.
 
             Uses INSERT ... ON CONFLICT DO UPDATE so concurrent calls
@@ -103,12 +116,14 @@ class GenericTaskQueueTaskType(models.Model):
                 (code, module, name, active, notify_on_completion,
                  propagate_progress,
                  default_retry_policy, default_max_retries,
+                 service_name, default_channel,
                  create_uid, write_uid, create_date, write_date)
             VALUES
                 (%(code)s, %(module)s, %(name)s, true,
                  %(notify_on_completion)s,
                  %(propagate_progress)s,
                  %(default_retry_policy)s, %(default_max_retries)s,
+                 %(service_name)s, %(default_channel)s,
                  %(uid)s, %(uid)s,
                  (NOW() AT TIME ZONE 'UTC'), (NOW() AT TIME ZONE 'UTC'))
             ON CONFLICT (code) DO UPDATE SET
@@ -118,6 +133,8 @@ class GenericTaskQueueTaskType(models.Model):
                 propagate_progress    = EXCLUDED.propagate_progress,
                 default_retry_policy  = EXCLUDED.default_retry_policy,
                 default_max_retries   = EXCLUDED.default_max_retries,
+                service_name          = EXCLUDED.service_name,
+                default_channel       = EXCLUDED.default_channel,
                 write_uid             = EXCLUDED.write_uid,
                 write_date            = EXCLUDED.write_date
         """, {
@@ -128,5 +145,7 @@ class GenericTaskQueueTaskType(models.Model):
             'propagate_progress': propagate_progress,
             'default_retry_policy': default_retry_policy,
             'default_max_retries': default_max_retries,
+            'service_name': service_name,
+            'default_channel': default_channel,
             'uid': self.env.uid,
         })

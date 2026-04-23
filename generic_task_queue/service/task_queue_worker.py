@@ -69,6 +69,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._worker_uuid = str(uuid.uuid4())
+        self._service_name = self._worker_params.get('service_name')
         self._channels = self._worker_params.get(
             'channels', ['default'])
         self._task_types = self._worker_params.get(
@@ -193,6 +194,29 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 "Error sending heartbeat for worker %s",
                 self._worker_uuid, exc_info=True)
 
+    def _get_effective_task_types(self):
+        """ Return type codes this worker may claim.
+
+            Filters by service affinity (_service_name) and the optional
+            declared _task_types allowlist. Re-evaluated on every claim
+            cycle so late-registered types are picked up automatically.
+
+            A task type is claimable when:
+            - its _service_name is None (any service), OR
+            - its _service_name matches this worker's service name.
+            Then further restricted to _task_types if that list is non-empty.
+        """
+        all_types = TaskTypeRegistry.get_initialized_types()
+        effective = [
+            name for name, cls in all_types.items()
+            if getattr(cls, '_service_name', None) in (
+                None, self._service_name)
+        ]
+        if self._task_types:
+            allowed = frozenset(self._task_types)
+            effective = [t for t in effective if t in allowed]
+        return effective
+
     @staticmethod
     def _get_singleton_types():
         """ Return set of type codes that have _singleton = True. """
@@ -210,7 +234,8 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                     self._worker_record_id)
                 Task = env['generic.task.queue.task']
                 tasks = Task.claim_task(
-                    worker, self._channels, self._task_types,
+                    worker, self._channels,
+                    self._get_effective_task_types(),
                     singleton_types=self._get_singleton_types(),
                     limit=limit)
                 # Read all task data before leaving the transaction.
