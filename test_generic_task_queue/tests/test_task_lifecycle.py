@@ -359,6 +359,142 @@ class TestTaskClaimTask(TransactionCase):
         for task in claimed:
             self.assertEqual(task.state, 'assigned')
 
+    # ------------------------------------------------------------------
+    # Singleton guard
+    # ------------------------------------------------------------------
+
+    def _make_singleton(self, name='Singleton task'):
+        return self.Task.create({
+            'name': name,
+            'type_code': 'test.task.type.singleton',
+            'channel': 'default',
+        })
+
+    def _claim_singleton(self, limit=1):
+        return self.Task.claim_task(
+            self.worker, ['default'],
+            ['test.task.type.singleton'],
+            singleton_types=frozenset(['test.task.type.singleton']),
+            limit=limit)
+
+    def test_singleton_claimed_when_no_other_active(self):
+        """Singleton task is claimed when no other instance is active."""
+        self._make_singleton()
+        claimed = self._claim_singleton()
+        self.assertEqual(len(claimed), 1)
+
+    def test_singleton_blocked_when_assigned(self):
+        """Second singleton task is not claimed while first is assigned."""
+        t1 = self._make_singleton('First')
+        t2 = self._make_singleton('Second')
+        # Claim first — it becomes assigned
+        c1 = self._claim_singleton()
+        self.assertEqual(len(c1), 1)
+        self.assertEqual(c1[0].id, t1.id)
+        self.assertEqual(t1.state, 'assigned')
+        # Second claim must return nothing
+        c2 = self._claim_singleton()
+        self.assertEqual(len(c2), 0)
+        self.assertEqual(t2.state, 'pending')
+
+    def test_singleton_blocked_when_running(self):
+        """Second singleton task is not claimed while first is running."""
+        t1 = self._make_singleton('First')
+        t2 = self._make_singleton('Second')
+        t1.action_assign(self.worker)
+        t1.sudo().action_start()
+        self.assertEqual(t1.state, 'running')
+
+        claimed = self._claim_singleton()
+        self.assertEqual(len(claimed), 0)
+        self.assertEqual(t2.state, 'pending')
+
+    def test_singleton_claimable_after_done(self):
+        """Next singleton task is claimable once previous is done."""
+        t1 = self._make_singleton('First')
+        t2 = self._make_singleton('Second')
+        t1.action_assign(self.worker)
+        t1.sudo().action_start()
+        t1.sudo().action_done({})
+        self.assertEqual(t1.state, 'done')
+
+        claimed = self._claim_singleton()
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed[0].id, t2.id)
+
+    def test_singleton_claimable_after_failed(self):
+        """Next singleton task is claimable once previous has failed."""
+        t1 = self._make_singleton('First')
+        t2 = self._make_singleton('Second')
+        t1.action_assign(self.worker)
+        t1.sudo().action_start()
+        t1.sudo().action_fail('boom')
+        self.assertEqual(t1.state, 'failed')
+
+        claimed = self._claim_singleton()
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed[0].id, t2.id)
+
+    def test_non_singleton_not_blocked_by_running_sibling(self):
+        """Non-singleton type is claimed even when another of the same type
+        is already running."""
+        t1 = self.Task.create({
+            'name': 'Running noop',
+            'type_code': 'test.task.type.noop',
+            'channel': 'default',
+        })
+        t2 = self.Task.create({
+            'name': 'Pending noop',
+            'type_code': 'test.task.type.noop',
+            'channel': 'default',
+        })
+        t1.action_assign(self.worker)
+        t1.sudo().action_start()
+        self.assertEqual(t1.state, 'running')
+
+        # No singleton types — noop is not singleton
+        claimed = self.Task.claim_task(
+            self.worker, ['default'], ['test.task.type.noop'],
+            singleton_types=frozenset(),
+            limit=1)
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed[0].id, t2.id)
+
+    def test_singleton_batch_claim_only_one_per_type(self):
+        """With limit>1, at most one singleton task per type is claimed
+        even when multiple pending tasks of that type exist."""
+        for i in range(3):
+            self._make_singleton('Singleton %d' % i)
+
+        claimed = self.Task.claim_task(
+            self.worker, ['default'],
+            ['test.task.type.singleton'],
+            singleton_types=frozenset(['test.task.type.singleton']),
+            limit=4)
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed[0].state, 'assigned')
+
+    def test_different_singleton_types_independent(self):
+        """Two different singleton types do not block each other."""
+        self._make_singleton('Singleton 1')
+        echo = self.Task.create({
+            'name': 'Echo task',
+            'type_code': 'test.task.type.echo',
+            'channel': 'default',
+        })
+        # Claim and start singleton
+        c1 = self._claim_singleton()
+        self.assertEqual(len(c1), 1)
+        c1[0].sudo().action_start()
+
+        # Echo is a different type — not blocked
+        claimed_echo = self.Task.claim_task(
+            self.worker, ['default'], ['test.task.type.echo'],
+            singleton_types=frozenset(['test.task.type.singleton']),
+            limit=1)
+        self.assertEqual(len(claimed_echo), 1)
+        self.assertEqual(claimed_echo[0].id, echo.id)
+
 
 class TestTaskUpdateProgress(TransactionCase):
     """Test the update_progress() method.

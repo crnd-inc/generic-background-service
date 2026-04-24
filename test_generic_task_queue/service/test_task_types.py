@@ -86,6 +86,15 @@ class TestTaskTypeBatchChild(AbstractTaskType):
         return {'processed': processed}
 
 
+class TestTaskTypeSingleton(AbstractTaskType):
+    """Singleton task type for concurrency guard tests."""
+    _name = 'test.task.type.singleton'
+    _singleton = True
+
+    def execute(self, env, task):
+        return {}
+
+
 class TestRoutingAnyServiceType(AbstractTaskType):
     """Routing test: claimable by any service (_service_name=None)."""
     _name = 'test.routing.any.service'

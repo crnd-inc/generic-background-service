@@ -69,6 +69,20 @@ class GenericTaskQueueTask(models.Model):
                 'pending', 'assigned', 'running', 'stuck', 'waiting'
             ) AND unique_key IS NOT NULL
         """)
+        # Singleton NOT EXISTS guard: fast lookup of active tasks per type
+        self.env.cr.execute("""
+            CREATE INDEX IF NOT EXISTS
+                generic_task_queue_task_singleton_active_idx
+            ON generic_task_queue_task (type_code)
+            WHERE state IN ('assigned', 'running')
+        """)
+        # Singleton canonical-task subquery: find first pending per type
+        self.env.cr.execute("""
+            CREATE INDEX IF NOT EXISTS
+                generic_task_queue_task_singleton_pending_idx
+            ON generic_task_queue_task (type_code, priority, date_created)
+            WHERE state = 'pending'
+        """)
 
     def _bus_channel(self):
         self.ensure_one()
@@ -742,6 +756,18 @@ class GenericTaskQueueTask(models.Model):
                         AND t2.state IN ('assigned', 'running')
                   )
               )
+              AND (
+                  %s IS NULL
+                  OR NOT (type_code = ANY(%s))
+                  OR id = (
+                      SELECT t3.id
+                      FROM generic_task_queue_task t3
+                      WHERE t3.type_code = generic_task_queue_task.type_code
+                        AND t3.state = 'pending'
+                      ORDER BY t3.priority, t3.date_created
+                      LIMIT 1
+                  )
+              )
             ORDER BY priority, date_created
             LIMIT %s
             FOR UPDATE SKIP LOCKED
@@ -749,6 +775,7 @@ class GenericTaskQueueTask(models.Model):
             (
                 list(channels),
                 type_filter, type_filter,
+                singleton_filter, singleton_filter,
                 singleton_filter, singleton_filter,
                 limit,
             )
