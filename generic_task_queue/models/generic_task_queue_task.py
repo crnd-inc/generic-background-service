@@ -69,12 +69,14 @@ class GenericTaskQueueTask(models.Model):
                 'pending', 'assigned', 'running', 'stuck', 'waiting'
             ) AND unique_key IS NOT NULL
         """)
-        # Singleton NOT EXISTS guard: fast lookup of active tasks per type
+        # Singleton NOT EXISTS guard: fast lookup of active tasks per type.
+        # Includes 'stuck' so a timed-out singleton blocks new claims of
+        # the same type while its thread is still alive.
         self.env.cr.execute("""
             CREATE INDEX IF NOT EXISTS
                 generic_task_queue_task_singleton_active_idx
             ON generic_task_queue_task (type_code)
-            WHERE state IN ('assigned', 'running')
+            WHERE state IN ('assigned', 'running', 'stuck')
         """)
         # Singleton canonical-task subquery: find first pending per type
         self.env.cr.execute("""
@@ -753,7 +755,7 @@ class GenericTaskQueueTask(models.Model):
                   OR NOT EXISTS (
                       SELECT 1 FROM generic_task_queue_task t2
                       WHERE t2.type_code = generic_task_queue_task.type_code
-                        AND t2.state IN ('assigned', 'running')
+                        AND t2.state IN ('assigned', 'running', 'stuck')
                   )
               )
               AND (

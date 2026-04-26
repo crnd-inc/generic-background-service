@@ -143,7 +143,8 @@ class AbstractTaskType(abc.ABC):
             (e.g., notify user, trigger next step).
 
             :param env: Odoo environment
-            :param task: task record (state is already 'done')
+            :param task: task record (state is still 'running'; action_done
+                is called by the worker after this hook returns)
             :param result: return value from execute()
         """
 
@@ -154,7 +155,8 @@ class AbstractTaskType(abc.ABC):
             (e.g., log to chatter, send alert).
 
             :param env: Odoo environment
-            :param task: task record (state is already 'failed')
+            :param task: task record (state is still 'running'; action_fail
+                is called by the worker after this hook returns)
             :param exc: the exception that was raised
         """
 

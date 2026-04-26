@@ -635,30 +635,24 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         """
         if not self._channels:
             return
+        # Apply the same service-affinity filter as _claim_and_spawn so
+        # this worker only retries tasks it can actually claim.
+        effective_types = self._get_effective_task_types()
+        if not effective_types:
+            return
         try:
             with self.with_env() as env:
-                if self._task_types:
-                    env.cr.execute("""
-                        SELECT id FROM generic_task_queue_task
-                        WHERE state = 'failed'
-                          AND retry_policy = 'retriable'
-                          AND retry_count < max_retries
-                          AND channel IN %s
-                          AND type_code IN %s
-                        LIMIT 10
-                        FOR UPDATE SKIP LOCKED
-                    """, (tuple(self._channels),
-                          tuple(self._task_types)))
-                else:
-                    env.cr.execute("""
-                        SELECT id FROM generic_task_queue_task
-                        WHERE state = 'failed'
-                          AND retry_policy = 'retriable'
-                          AND retry_count < max_retries
-                          AND channel IN %s
-                        LIMIT 10
-                        FOR UPDATE SKIP LOCKED
-                    """, (tuple(self._channels),))
+                env.cr.execute("""
+                    SELECT id FROM generic_task_queue_task
+                    WHERE state = 'failed'
+                      AND retry_policy = 'retriable'
+                      AND retry_count < max_retries
+                      AND channel IN %s
+                      AND type_code IN %s
+                    LIMIT 10
+                    FOR UPDATE SKIP LOCKED
+                """, (tuple(self._channels),
+                      tuple(effective_types)))
                 task_ids = [r[0] for r in env.cr.fetchall()]
                 if not task_ids:
                     return
