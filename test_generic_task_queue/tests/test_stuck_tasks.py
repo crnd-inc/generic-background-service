@@ -469,6 +469,71 @@ class TestTaskTypeDefaultTimeout(TransactionCase):
         self.assertEqual(task_type.default_timeout, 120)
 
 
+class TestSingletonStuckBlocksClaim(TransactionCase):
+    """claim_task() must not claim a singleton when another is stuck.
+
+    Before the fix, the singleton NOT EXISTS guard only checked states
+    ('assigned', 'running'). A stuck singleton vacated its slot and a
+    second instance of the same type could be claimed, breaking the
+    at-most-one guarantee while the stuck thread was still alive.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.worker = _make_worker(self.env)
+
+    def test_stuck_singleton_blocks_claim(self):
+        """Second task of a singleton type must not be claimable while the
+        first is stuck."""
+        task1 = self.env['generic.task.queue.task'].create_task(
+            'test.task.type.singleton', name='singleton-stuck')
+        task1.action_assign(self.worker)
+        task1.action_start()
+        task1.action_stuck()
+        self.assertEqual(task1.state, 'stuck')
+
+        task2 = self.env['generic.task.queue.task'].create_task(
+            'test.task.type.singleton', name='singleton-pending')
+        self.assertEqual(task2.state, 'pending')
+
+        claimed = self.env['generic.task.queue.task'].claim_task(
+            self.worker,
+            channels=['default'],
+            task_types=['test.task.type.singleton'],
+            singleton_types=frozenset(['test.task.type.singleton']),
+            limit=1,
+        )
+        self.assertEqual(
+            len(claimed), 0,
+            "Stuck singleton must block claiming another task of same type")
+
+    def test_resolved_singleton_allows_next_claim(self):
+        """Once the stuck singleton finishes, the next pending task can be
+        claimed."""
+        task1 = self.env['generic.task.queue.task'].create_task(
+            'test.task.type.singleton', name='singleton-stuck')
+        task1.action_assign(self.worker)
+        task1.action_start()
+        task1.action_stuck()
+
+        task2 = self.env['generic.task.queue.task'].create_task(
+            'test.task.type.singleton', name='singleton-pending')
+
+        # Resolve the stuck task (thread eventually finished)
+        task1.action_done()
+        self.assertEqual(task1.state, 'done')
+
+        claimed = self.env['generic.task.queue.task'].claim_task(
+            self.worker,
+            channels=['default'],
+            task_types=['test.task.type.singleton'],
+            singleton_types=frozenset(['test.task.type.singleton']),
+            limit=1,
+        )
+        self.assertEqual(len(claimed), 1)
+        self.assertEqual(claimed.id, task2.id)
+
+
 class TestWorkerMarkStuck(TransactionCase):
     """mark_stuck() must update worker state for observability."""
 

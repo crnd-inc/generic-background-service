@@ -277,6 +277,74 @@ class TestRetryEtaExponential(TransactionCase):
         self.assertLessEqual(eta, after + timedelta(seconds=3601))
 
 
+class TestAutoRetryServiceAffinity(TransactionCase):
+    """_auto_retry_failed must not retry tasks whose type is locked to a
+    different service, even when the task sits on the generic channel.
+
+    The fix: _auto_retry_failed now always calls _get_effective_task_types()
+    (which filters by _service_name) and passes the result to the SQL query.
+    A task of type 'test.routing.specific.service' (_service_name=
+    'my.specific.service') must not appear in the retry query executed by
+    a 'generic.task.queue.service' worker.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.worker_rec = _make_worker(self.env)
+
+    def _generic_effective_types(self):
+        """Build effective_types as a generic-service worker would."""
+        worker = TaskQueueWorker.__new__(TaskQueueWorker)
+        worker._service_name = 'generic.task.queue.service'
+        worker._task_types = []
+        return worker._get_effective_task_types()
+
+    def test_service_specific_type_not_in_generic_effective_types(self):
+        """'test.routing.specific.service' must be absent from generic
+        worker's effective types."""
+        effective = self._generic_effective_types()
+        self.assertNotIn('test.routing.specific.service', effective)
+
+    def test_service_specific_failed_task_not_selected_for_retry(self):
+        """A failed retriable task locked to 'my.specific.service' must not
+        appear in the retry SQL run by the generic service worker, even when
+        the task is on channel='default'."""
+        task = self.env['generic.task.queue.task'].create_task(
+            'test.routing.specific.service',
+            name='affinity-retry-test',
+            retry_policy='retriable',
+            max_retries=3,
+            channel='default',  # force onto default channel to isolate the
+                                # service-affinity filter from channel filter
+        )
+        task.action_assign(self.worker_rec)
+        task.action_start()
+        task.action_fail('simulated failure')
+
+        effective_types = self._generic_effective_types()
+        self.assertFalse(
+            effective_types == [],
+            "effective_types must not be empty — generic worker handles "
+            "many other types")
+
+        self.env.flush_all()
+        self.env.cr.execute("""
+            SELECT id FROM generic_task_queue_task
+            WHERE state = 'failed'
+              AND retry_policy = 'retriable'
+              AND retry_count < max_retries
+              AND channel IN %s
+              AND type_code IN %s
+            FOR UPDATE SKIP LOCKED
+        """, (('default',), tuple(effective_types)))
+        task_ids = [r[0] for r in self.env.cr.fetchall()]
+
+        self.assertNotIn(
+            task.id, task_ids,
+            "Task locked to 'my.specific.service' must not be retried "
+            "by the generic service worker")
+
+
 class TestRetryEtaUnknownType(TransactionCase):
     """_retry_eta() with an unregistered task type returns None."""
 
