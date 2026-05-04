@@ -5,6 +5,7 @@ from datetime import timedelta
 import psycopg2.errors
 
 from odoo import models, fields, api, exceptions
+from odoo.addons.generic_mixin.tools.x2m_agg_utils import read_counts_for_o2m
 
 from ..exceptions import AlreadyScheduledException
 
@@ -245,9 +246,11 @@ class GenericTaskQueueTask(models.Model):
                 vals['type_id'] = task_type.id
         return super().create(vals_list)
 
+    @api.depends('child_ids')
     def _compute_child_count(self):
+        mapped_data = read_counts_for_o2m(self, 'child_ids')
         for record in self:
-            record.child_count = len(record.child_ids)
+            record.child_count = mapped_data.get(record.id, 0)
 
     def action_open_child_tasks(self):
         """ Open child tasks in a list view. """
