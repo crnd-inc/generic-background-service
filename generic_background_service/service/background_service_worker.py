@@ -71,10 +71,16 @@ class AbstractBackgroundServiceWorker(threading.Thread):
 
     @contextmanager
     def with_env(self):
-        with self.worker_registry.cursor() as cr:
+        # check_signaling() detects registry rebuild or ormcache invalidation
+        # signals written by other Odoo processes (module installs, writes that
+        # bump base_cache_signaling, etc.) and returns an up-to-date registry.
+        # Without this call the worker would serve stale ormcache data for its
+        # entire lifetime.  check_signaling() may return a *new* registry
+        # object if a rebuild was triggered, so we store the result.
+        registry = self.worker_registry.check_signaling()
+        self._worker_registry = registry
+        with registry.cursor() as cr:
             env = odoo.api.Environment(cr, odoo.SUPERUSER_ID, {})
-
-            # TODO: Possibly wrap in some error-handling code
             yield env
 
     @property

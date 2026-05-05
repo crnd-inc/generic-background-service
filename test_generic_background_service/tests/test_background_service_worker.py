@@ -1,5 +1,6 @@
 import logging
 import threading
+from unittest.mock import patch
 
 from odoo.tests.common import TransactionCase
 
@@ -426,3 +427,69 @@ class TestWorkerWithEnv(BackgroundServiceTestCase):
         self.assertEqual(FailThenSucceedWorker.error_count, 1)
         self.assertTrue(FailThenSucceedWorker.db_ok_after_error,
                         "DB access should work after error recovery")
+
+
+class TestWithEnvCheckSignaling(BackgroundServiceTestCase):
+    """with_env() must call registry.check_signaling() on every entry.
+
+    Without this call, background workers never detect ORM-cache
+    invalidation or registry-rebuild signals from other Odoo processes,
+    and serve stale ormcache data for their entire lifetime.
+
+    Note: in test mode check_signaling() is a no-op (returns self
+    immediately), so these tests verify the *call* rather than the
+    cache-clearing side-effect.
+    """
+
+    def _make_minimal_worker(self):
+        """Return a worker with the test registry pre-set."""
+        cls = type(
+            '_MinimalWorker',
+            (AbstractBackgroundServiceWorker,),
+            {'run_service': lambda self: None},
+        )
+        return self._create_worker(cls)
+
+    def test_check_signaling_called_on_each_with_env(self):
+        """check_signaling() must be called once per with_env() entry."""
+        worker = self._make_minimal_worker()
+        registry = worker._worker_registry
+
+        with patch.object(registry, 'check_signaling',
+                          wraps=registry.check_signaling) as mock_cs:
+            with worker.with_env():
+                pass
+            with worker.with_env():
+                pass
+
+        self.assertEqual(mock_cs.call_count, 2,
+                         "check_signaling() must be called on every "
+                         "with_env() entry")
+
+    def test_worker_registry_updated_when_check_signaling_returns_new(self):
+        """If check_signaling() returns a new registry object
+        (as happens on module install), _worker_registry must be updated
+        so subsequent with_env() calls use the fresh registry."""
+        worker = self._make_minimal_worker()
+        original_registry = worker._worker_registry
+
+        # Simulate check_signaling returning a *different* registry
+        # (e.g. after a module install triggered a reload).
+        fake_new_registry = object()
+
+        with patch.object(original_registry, 'check_signaling',
+                          return_value=fake_new_registry):
+            try:
+                with worker.with_env():
+                    pass
+            except Exception:
+                # Opening a cursor on fake_new_registry will fail —
+                # we only care that _worker_registry was updated before
+                # the cursor was opened.
+                import logging as _logging
+                _logging.getLogger(__name__).debug(
+                    "Expected cursor failure on fake registry", exc_info=True)
+
+        self.assertIs(worker._worker_registry, fake_new_registry,
+                      "_worker_registry must be replaced with the "
+                      "object returned by check_signaling()")
