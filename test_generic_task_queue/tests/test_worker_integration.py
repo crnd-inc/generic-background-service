@@ -186,7 +186,7 @@ class TestBatchParentChildE2E(TransactionCase):
         self.assertEqual(children[0].state, 'done')
 
         # Second child fails permanently
-        children[1].retry_policy = 'non_retriable'
+        children[1].retry_policy = 'no_retry'
         children[1].sudo().action_assign(self.worker)
         children[1].sudo().action_start()
         children[1].sudo().action_fail('chunk error')

@@ -30,14 +30,14 @@ def _make_worker(env):
 def _make_failed_task(env, worker, max_retries=3, retry_count=None):
     """Create a task and put it in 'failed' state with the given retry_count.
 
-    After action_fail retry_count stays at 0 (only action_retry increments it).
-    Override with retry_count= to simulate a task that has already been retried
-    N times and failed again.
+    After action_fail retry_count stays at 0 (only _action_auto_retry
+    increments it). Override with retry_count= to simulate a task that
+    has already been auto-retried N times and failed again.
     """
     task = env['generic.task.queue.task'].create_task(
         'test.task.type.noop',
         name='retry-test',
-        retry_policy='retriable',
+        retry_policy='retry_any',
         max_retries=max_retries,
     )
     task.action_assign(worker)
@@ -61,7 +61,7 @@ def _run_auto_retry_sql(env, channels=('default',), task_types=None):
         env.cr.execute("""
             SELECT id FROM generic_task_queue_task
             WHERE state = 'failed'
-              AND retry_policy = 'retriable'
+              AND retry_policy = 'retry_any'
               AND retry_count < max_retries
               AND channel IN %s
               AND type_code IN %s
@@ -71,7 +71,7 @@ def _run_auto_retry_sql(env, channels=('default',), task_types=None):
         env.cr.execute("""
             SELECT id FROM generic_task_queue_task
             WHERE state = 'failed'
-              AND retry_policy = 'retriable'
+              AND retry_policy = 'retry_any'
               AND retry_count < max_retries
               AND channel IN %s
             FOR UPDATE SKIP LOCKED
@@ -115,9 +115,9 @@ def _make_type_cls(retry_delays):
 class TestAutoRetryBoundary(TransactionCase):
     """The auto-retry guard is retry_count < max_retries.
 
-    retry_count counts how many times action_retry() has been called
-    (i.e. how many retries have already been attempted).  action_fail()
-    does NOT increment retry_count.
+    retry_count counts how many automatic retries have been attempted
+    (_action_auto_retry increments it).  action_fail() and manual
+    action_retry() do NOT increment retry_count.
 
     With max_retries=3, retries should be allowed when retry_count is
     0, 1, or 2.  When retry_count reaches 3 the task should stay failed.
@@ -136,7 +136,7 @@ class TestAutoRetryBoundary(TransactionCase):
         )
         tasks = self.env['generic.task.queue.task'].browse(task_ids)
         for t in tasks:
-            t.action_retry()
+            t._action_auto_retry()
 
     def test_retry_count_below_max_retries_is_retried(self):
         """retry_count=0, max_retries=3 → task is retried (0 < 3)."""
@@ -184,12 +184,12 @@ class TestAutoRetryBoundary(TransactionCase):
         self.assertEqual(task.state, 'failed')
 
     def test_non_retriable_task_is_not_retried(self):
-        """retry_policy='non_retriable' tasks never appear in the query."""
+        """retry_policy='no_retry' tasks never appear in the query."""
         task = self.env['generic.task.queue.task'].create_task(
             'test.task.type.noop',
             name='non-retriable',
             max_retries=3,
-            retry_policy='non_retriable',
+            retry_policy='no_retry',
         )
         task.action_assign(self.worker)
         task.action_start()
@@ -312,7 +312,7 @@ class TestAutoRetryServiceAffinity(TransactionCase):
         task = self.env['generic.task.queue.task'].create_task(
             'test.routing.specific.service',
             name='affinity-retry-test',
-            retry_policy='retriable',
+            retry_policy='retry_any',
             max_retries=3,
             channel='default',  # force onto default channel to isolate the
                                 # service-affinity filter from channel filter
@@ -331,7 +331,7 @@ class TestAutoRetryServiceAffinity(TransactionCase):
         self.env.cr.execute("""
             SELECT id FROM generic_task_queue_task
             WHERE state = 'failed'
-              AND retry_policy = 'retriable'
+              AND retry_policy = 'retry_any'
               AND retry_count < max_retries
               AND channel IN %s
               AND type_code IN %s

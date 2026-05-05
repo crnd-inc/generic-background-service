@@ -13,7 +13,15 @@ from odoo import exceptions as odoo_exceptions
 from odoo.addons.generic_background_service import (
     AbstractBackgroundServiceWorker,
 )
+from ..exceptions import RetryTask
 from .task_type_registry import TaskTypeRegistry
+
+# psycopg2 error types that are always transient and safe to retry
+KNOWN_TRANSIENT_ERRORS = (
+    psycopg2.errors.SerializationFailure,
+    psycopg2.errors.DeadlockDetected,
+    psycopg2.errors.LockNotAvailable,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -172,7 +180,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         # 4. Check waiting parents
         self._check_waiting_parents()
 
-        # 5. Auto-retry failed retriable tasks
+        # 5. Auto-retry failed retry_any tasks
         self._auto_retry_failed()
 
         # 6. Periodically check for stale peer workers
@@ -329,16 +337,35 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         task_id)
             # env.cr commits here — child row lock fully released
         except Exception as exc:
-            _logger.error(
-                "Task %d failed", task_id, exc_info=True)
             try:
                 with self.with_env() as env:
                     task = env['generic.task.queue.task'].browse(task_id)
 
-                    # Call on_failure hook
+                    if (self._should_auto_retry(task.retry_policy, exc)
+                            and task.retry_count < task.max_retries):
+                        if (isinstance(exc, RetryTask)
+                                and exc.after is not None):
+                            from datetime import datetime
+                            eta = datetime.utcnow() + exc.after
+                        else:
+                            eta = self._retry_eta(
+                                TaskTypeRegistry(),
+                                task.type_code, task.retry_count)
+                        _logger.info(
+                            "Task %d auto-retry %d/%d "
+                            "(type=%s, error=%s)%s",
+                            task_id,
+                            task.retry_count + 1, task.max_retries,
+                            task.type_code, type(exc).__name__,
+                            " eta=%s" % eta if eta else "")
+                        task._action_auto_retry(eta=eta)
+                        return
+
+                    # Permanent failure
+                    _logger.error(
+                        "Task %d failed", task_id, exc_info=True)
                     registry = TaskTypeRegistry()
-                    task_type_cls = registry.get_task_type(
-                        task.type_code)
+                    task_type_cls = registry.get_task_type(task.type_code)
                     task_type = task_type_cls()
                     try:
                         task_type.on_failure(env, task, exc)
@@ -346,7 +373,6 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         _logger.error(
                             "Error in on_failure hook for task %d",
                             task_id, exc_info=True)
-
                     try:
                         task.action_fail(
                             traceback.format_exc(), runner_id=runner_id)
@@ -357,7 +383,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             task_id)
             except Exception:
                 _logger.error(
-                    "Failed to mark task %d as failed",
+                    "Failed to handle task %d failure",
                     task_id, exc_info=True)
 
         # Phase 3: notify parent in a fresh transaction.
@@ -414,7 +440,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         "(retry_policy=%s, retry_count=%d)",
                         task_info.task_id,
                         task.retry_policy, task.retry_count)
-                    if task.retry_policy == 'retriable':
+                    if task.retry_policy in ('retry_any', 'retry_known'):
                         task.write({
                             'state': 'pending',
                             'worker_id': False,
@@ -524,7 +550,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         # Don't re-execute — just un-own so any worker
                         # can re-check whether children are done.
                         task.write({'worker_id': False})
-                    elif task.retry_policy == 'retriable':
+                    elif task.retry_policy in ('retry_any', 'retry_known'):
                         task.write({
                             'state': 'pending',
                             'worker_id': False,
@@ -619,7 +645,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 child_task_id, exc_info=True)
 
     def _auto_retry_failed(self):
-        """ Automatically retry failed retriable tasks.
+        """ Automatically retry failed retry_any tasks.
 
             Uses FOR UPDATE SKIP LOCKED to prevent multiple
             workers from retrying the same tasks simultaneously.
@@ -645,7 +671,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 env.cr.execute("""
                     SELECT id FROM generic_task_queue_task
                     WHERE state = 'failed'
-                      AND retry_policy = 'retriable'
+                      AND retry_policy = 'retry_any'
                       AND retry_count < max_retries
                       AND channel IN %s
                       AND type_code IN %s
@@ -666,7 +692,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         registry, task.type_code,
                         task.retry_count)
                     try:
-                        task.action_retry(eta=eta)
+                        task._action_auto_retry(eta=eta)
                         _logger.info(
                             "Task %d (type=%s, retry_count=%d/%d) "
                             "queued for retry%s",
@@ -680,6 +706,24 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         except Exception:
             _logger.error(
                 "Error auto-retrying failed tasks", exc_info=True)
+
+    @staticmethod
+    def _should_auto_retry(retry_policy, exc):
+        """ Return True if this exception warrants an automatic retry
+            under the given policy.
+
+            :param str retry_policy: task's retry_policy field value
+            :param exc: exception raised by execute() (None = crash recovery)
+        """
+        if retry_policy == 'no_retry':
+            return False
+        if retry_policy == 'retry_any':
+            return True
+        if retry_policy == 'retry_known':
+            if exc is None:
+                return True  # crash recovery — assume transient
+            return isinstance(exc, (RetryTask,) + KNOWN_TRANSIENT_ERRORS)
+        return False
 
     @staticmethod
     def _retry_eta(registry, type_code, retry_count):

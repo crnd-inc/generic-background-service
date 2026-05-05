@@ -38,7 +38,9 @@ class GenericTaskQueueTaskType(models.Model):
              "timeout field."
     )
     default_retry_policy = fields.Selection(
-        [('retriable', 'Retriable'), ('non_retriable', 'Non-Retriable')],
+        [('no_retry', 'No Retry'),
+         ('retry_known', 'Retry Known'),
+         ('retry_any', 'Retry Any')],
         readonly=True,
         help="Default retry policy defined in code by the task type. "
              "Override per-task at enqueue time via create_task().")
@@ -100,7 +102,7 @@ class GenericTaskQueueTaskType(models.Model):
     @api.model
     def _sync_type(self, code, module, name=None, notify_on_completion=False,
                    propagate_progress=False,
-                   default_retry_policy='non_retriable',
+                   default_retry_policy='no_retry',
                    default_max_retries=0,
                    service_name='',
                    default_channel='default'):

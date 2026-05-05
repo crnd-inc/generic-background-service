@@ -35,9 +35,36 @@ ALLOWED_TRANSITIONS = {
 }
 
 RETRY_POLICIES = [
-    ('retriable', 'Retriable'),
-    ('non_retriable', 'Non-retriable'),
+    ('no_retry', 'No Retry'),
+    ('retry_known', 'Retry Known'),
+    ('retry_any', 'Retry Any'),
 ]
+
+# Map old policy names (pre-0.1.0) to current names for backward compat.
+_RETRY_POLICY_ALIASES = {
+    'non_retriable': 'no_retry',
+    'retriable':     'retry_any',
+}
+
+
+def _normalize_retry_policy(value):
+    """Translate deprecated policy names; warn so callers know to update.
+
+    Extension modules not yet updated may still set
+    ``_retry_policy = 'retriable'`` or pass
+    ``retry_policy='non_retriable'`` to ``create_task()``.
+    Accept these values rather than crashing, but warn so developers
+    know to update their code.
+    """
+    canonical = _RETRY_POLICY_ALIASES.get(value)
+    if canonical is not None:
+        _logger.warning(
+            "Deprecated retry_policy value %r — use %r instead. "
+            "Old names will be removed in a future release.",
+            value, canonical,
+        )
+        return canonical
+    return value
 
 
 TERMINAL_STATES = frozenset({'done', 'failed', 'cancelled'})
@@ -183,7 +210,7 @@ class GenericTaskQueueTask(models.Model):
         help="Earliest time this task should be executed. "
              "Leave empty for immediate execution.")
     retry_policy = fields.Selection(
-        RETRY_POLICIES, default='non_retriable', required=True, readonly=True)
+        RETRY_POLICIES, default='no_retry', required=True, readonly=True)
     max_retries = fields.Integer(default=0, readonly=True)
     retry_count = fields.Integer(default=0, readonly=True)
     timeout = fields.Integer(
@@ -416,25 +443,16 @@ class GenericTaskQueueTask(models.Model):
         self._notify_completion()
 
     def action_retry(self, eta=None):
-        """ Transition: failed → pending (if retriable).
+        """ Manual retry: transition failed → pending.
 
-            Callable by task owner from UI (eta=None — execute
-            immediately) or by the worker's auto-retry loop
-            (eta=datetime — delay until the given time).
-
-            Manual retry is always allowed regardless of
-            max_retries — the limit only applies to automatic
-            retries by the worker.
+            Never increments retry_count — that is reserved for automatic
+            retries by the worker. Manual retry is always allowed
+            regardless of retry_policy or max_retries.
         """
         for record in self:
             if record.state != 'failed':
                 raise exceptions.ValidationError(
                     self.env._("Only failed tasks can be retried."))
-            if record.retry_policy != 'retriable':
-                raise exceptions.ValidationError(
-                    self.env._(
-                        "Task '%(name)s' is not retriable.",
-                        name=record.name))
             record.sudo().write({
                 'state': 'pending',
                 'worker_id': False,
@@ -442,8 +460,27 @@ class GenericTaskQueueTask(models.Model):
                 'task_error': False,
                 'progress': 0,
                 'eta': eta,
-                'retry_count': record.retry_count + 1,
             })
+        self._notify_state_change()
+
+    @api.private
+    def _action_auto_retry(self, eta=None):
+        """ Automatic retry: transition to pending and increment retry_count.
+
+            Called by the worker when a task should be automatically retried
+            (transient error or explicit RetryTask). The caller is responsible
+            for checking retry_count < max_retries and policy before calling.
+        """
+        self.ensure_one()
+        self.sudo().write({
+            'state': 'pending',
+            'worker_id': False,
+            'runner_id': False,
+            'task_error': False,
+            'progress': 0,
+            'eta': eta,
+            'retry_count': self.retry_count + 1,
+        })
         self._notify_state_change()
 
     def action_cancel(self):
@@ -518,7 +555,7 @@ class GenericTaskQueueTask(models.Model):
         failed_children = children.filtered(
             lambda c: c.state == 'failed')
         non_retriable_failures = failed_children.filtered(
-            lambda c: (c.retry_policy != 'retriable'
+            lambda c: (c.retry_policy != 'retry_any'
                        or c.retry_count >= c.max_retries))
 
         if non_retriable_failures:
@@ -527,7 +564,7 @@ class GenericTaskQueueTask(models.Model):
                     non_retriable_failures.mapped('name')))
             return
 
-        # If there are retriable failures still pending retry,
+        # If there are auto-retriable failures still pending retry,
         # keep waiting
         if failed_children:
             return
@@ -827,7 +864,7 @@ class GenericTaskQueueTask(models.Model):
             :param datetime eta: earliest execution time
             :param int timeout: max execution seconds (0 = no limit)
             :param int parent_id: parent task ID for sub-tasks
-            :param str retry_policy: 'retriable' or 'non_retriable'.
+            :param str retry_policy: 'no_retry', 'retry_known', or 'retry_any'.
                 Defaults to the task type's ``_retry_policy`` class attribute.
             :param int max_retries: max retry count.
                 Defaults to the task type's ``_max_retries`` class attribute.
@@ -851,11 +888,12 @@ class GenericTaskQueueTask(models.Model):
                     channel = cls._default_channel
             except KeyError:
                 if retry_policy is None:
-                    retry_policy = 'non_retriable'
+                    retry_policy = 'no_retry'
                 if max_retries is None:
                     max_retries = 0
                 if channel is None:
                     channel = 'default'
+        retry_policy = _normalize_retry_policy(retry_policy)
         if name is None:
             name = type_code
         vals = {

@@ -81,7 +81,7 @@ class GenericTaskQueueWorker(models.Model):
             ('state', 'in', ('assigned', 'running', 'stuck')),
         ])
         for task in orphaned:
-            if task.retry_policy == 'retriable':
+            if task.retry_policy in ('retry_any', 'retry_known'):
                 task.write({
                     'state': 'pending',
                     'worker_id': False,

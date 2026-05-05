@@ -10,7 +10,7 @@ def _make_worker(env, uuid='test-worker-stuck'):
     })
 
 
-def _make_task(env, name='Stuck test task', retry_policy='retriable'):
+def _make_task(env, name='Stuck test task', retry_policy='retry_any'):
     return env['generic.task.queue.task'].create({
         'name': name,
         'type_code': 'test.task.type.noop',
@@ -156,7 +156,7 @@ class TestMarkDeadHandlesStuck(TransactionCase):
         super().setUp()
         self.worker = _make_worker(self.env)
 
-    def _put_task_in_stuck(self, retry_policy='retriable'):
+    def _put_task_in_stuck(self, retry_policy='retry_any'):
         task = _make_task(self.env, retry_policy=retry_policy)
         task.action_assign(self.worker)
         task.action_start()
@@ -165,8 +165,8 @@ class TestMarkDeadHandlesStuck(TransactionCase):
         return task
 
     def test_mark_dead_retriable_stuck_goes_pending(self):
-        """mark_dead on retriable stuck task → pending, runner_id cleared."""
-        task = self._put_task_in_stuck('retriable')
+        """mark_dead on retry_any stuck task → pending, runner_id cleared."""
+        task = self._put_task_in_stuck('retry_any')
 
         self.worker.mark_dead()
 
@@ -176,9 +176,8 @@ class TestMarkDeadHandlesStuck(TransactionCase):
                          "runner_id must be cleared to invalidate zombies")
 
     def test_mark_dead_non_retriable_stuck_goes_failed(self):
-        """mark_dead on non-retriable stuck task → failed,
-           retry_count unchanged."""
-        task = self._put_task_in_stuck('non_retriable')
+        """mark_dead on no_retry stuck task → failed, retry_count unchanged."""
+        task = self._put_task_in_stuck('no_retry')
         self.assertEqual(task.retry_count, 0)
 
         self.worker.mark_dead()
@@ -186,7 +185,7 @@ class TestMarkDeadHandlesStuck(TransactionCase):
         self.assertEqual(task.state, 'failed')
         self.assertEqual(
             task.retry_count, 0,
-            "mark_dead must not increment retry_count (only action_retry does)"
+            "crash recovery must not increment retry_count"
         )
 
     def test_mark_dead_also_handles_running(self):
@@ -216,7 +215,7 @@ class TestAutoRetrySkipsStuck(TransactionCase):
         self.env.cr.execute("""
             SELECT id FROM generic_task_queue_task
             WHERE state = 'failed'
-              AND retry_policy = 'retriable'
+              AND retry_policy = 'retry_any'
               AND channel IN %s
             FOR UPDATE SKIP LOCKED
         """, (('default',),))
@@ -235,7 +234,7 @@ class TestOrphanCleanupOnStartup(TransactionCase):
         super().setUp()
         self.worker_rec = _make_worker(self.env)
 
-    def _put_task_in_state(self, state, retry_policy='retriable'):
+    def _put_task_in_state(self, state, retry_policy='retry_any'):
         task = _make_task(self.env, retry_policy=retry_policy)
         task.action_assign(self.worker_rec)
         if state in ('running', 'stuck', 'waiting'):
@@ -259,7 +258,7 @@ class TestOrphanCleanupOnStartup(TransactionCase):
         for task in orphans:
             if task.state == 'waiting':
                 task.write({'worker_id': False})
-            elif task.retry_policy == 'retriable':
+            elif task.retry_policy in ('retry_any', 'retry_known'):
                 task.write({
                     'state': 'pending',
                     'worker_id': False,
@@ -275,7 +274,7 @@ class TestOrphanCleanupOnStartup(TransactionCase):
 
     def test_retriable_running_goes_pending(self):
         """Orphaned retriable running task → pending, runner_id cleared."""
-        task = self._put_task_in_state('running', 'retriable')
+        task = self._put_task_in_state('running', 'retry_any')
         self._run_cleanup()
         self.assertEqual(task.state, 'pending')
         self.assertFalse(task.worker_id)
@@ -283,7 +282,7 @@ class TestOrphanCleanupOnStartup(TransactionCase):
 
     def test_retriable_stuck_goes_pending(self):
         """Orphaned retriable stuck task → pending, runner_id cleared."""
-        task = self._put_task_in_state('stuck', 'retriable')
+        task = self._put_task_in_state('stuck', 'retry_any')
         self._run_cleanup()
         self.assertEqual(task.state, 'pending')
         self.assertFalse(task.runner_id)
@@ -291,20 +290,20 @@ class TestOrphanCleanupOnStartup(TransactionCase):
     def test_non_retriable_stuck_goes_failed(self):
         """Orphaned non-retriable stuck task → failed, retry_count unchanged.
         """
-        task = self._put_task_in_state('stuck', 'non_retriable')
+        task = self._put_task_in_state('stuck', 'no_retry')
         self._run_cleanup()
         self.assertEqual(task.state, 'failed')
         self.assertEqual(task.retry_count, 0)
 
     def test_retriable_assigned_goes_pending(self):
         """Orphaned assigned task → pending."""
-        task = self._put_task_in_state('assigned', 'retriable')
+        task = self._put_task_in_state('assigned', 'retry_any')
         self._run_cleanup()
         self.assertEqual(task.state, 'pending')
 
     def test_waiting_task_worker_cleared(self):
         """Orphaned waiting task: worker_id cleared, state stays waiting."""
-        task = self._put_task_in_state('waiting', 'retriable')
+        task = self._put_task_in_state('waiting', 'retry_any')
         self.assertEqual(task.state, 'waiting')
         self.assertTrue(task.worker_id)
 
@@ -318,7 +317,7 @@ class TestOrphanCleanupOnStartup(TransactionCase):
 
     def test_waiting_task_not_reset_to_pending(self):
         """Orphaned waiting task must NOT go back to pending."""
-        task = self._put_task_in_state('waiting', 'retriable')
+        task = self._put_task_in_state('waiting', 'retry_any')
         self._run_cleanup()
         self.assertNotEqual(
             task.state, 'pending',

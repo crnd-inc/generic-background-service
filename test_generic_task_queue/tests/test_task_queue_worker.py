@@ -96,7 +96,7 @@ class TestWorkerModel(TransactionCase):
         task = Task.create({
             'name': 'Stuck task',
             'type_code': 'test.task.type.noop',
-            'retry_policy': 'retriable',
+            'retry_policy': 'retry_any',
         })
         task.action_assign(w)
         task.action_start()
@@ -119,7 +119,7 @@ class TestWorkerModel(TransactionCase):
         task = Task.create({
             'name': 'Non-retriable',
             'type_code': 'test.task.type.noop',
-            'retry_policy': 'non_retriable',
+            'retry_policy': 'no_retry',
         })
         task.action_assign(w)
         task.action_start()

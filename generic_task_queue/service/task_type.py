@@ -46,10 +46,11 @@ class AbstractTaskType(abc.ABC):
     _notify_on_completion = False
 
     # Default retry policy for tasks of this type.
-    # 'retriable'     — failed tasks are automatically retried
-    # 'non_retriable' — tasks are never retried automatically (default)
+    # 'no_retry'    — never auto-retry (default)
+    # 'retry_known' — retry on known-transient errors and explicit RetryTask
+    # 'retry_any'   — retry on any exception until max_retries exhausted
     # Can be overridden per-task at enqueue time via create_task().
-    _retry_policy = 'non_retriable'
+    _retry_policy = 'no_retry'
 
     # Maximum number of automatic retries for tasks of this type.
     # After retry_count reaches this value the task stays failed.

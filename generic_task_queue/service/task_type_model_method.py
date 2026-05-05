@@ -22,7 +22,7 @@ class ModelMethodTaskType(AbstractTaskType):
     """
     _name = 'task.type.model.method'
     _singleton = False  # parallel runs are fine; use unique_key to deduplicate
-    _retry_policy = 'non_retriable'
+    _retry_policy = 'no_retry'
     _max_retries = 0
 
     def execute(self, env, task):

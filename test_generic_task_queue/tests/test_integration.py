@@ -4,6 +4,10 @@ from odoo.addons.generic_task_queue.service.task_type_registry import (
     TaskTypeRegistry,
 )
 
+_COMPAT_LOGGER = (
+    'odoo.addons.generic_task_queue.models.generic_task_queue_task'
+)
+
 
 class TestCreateTaskConvenience(TransactionCase):
     """Test the create_task() convenience method."""
@@ -32,14 +36,14 @@ class TestCreateTaskConvenience(TransactionCase):
             channel='heavy',
             priority=1,
             timeout=300,
-            retry_policy='non_retriable',
+            retry_policy='no_retry',
             max_retries=0,
         )
         self.assertEqual(task.name, 'Increment values')
         self.assertEqual(task.channel, 'heavy')
         self.assertEqual(task.priority, 1)
         self.assertEqual(task.timeout, 300)
-        self.assertEqual(task.retry_policy, 'non_retriable')
+        self.assertEqual(task.retry_policy, 'no_retry')
         self.assertEqual(
             task.task_params['model'], 'test.task.target')
 
@@ -129,7 +133,7 @@ class TestEndToEndExecution(TransactionCase):
                 'method': 'do_increment',
                 'record_ids': [rec.id],
             },
-            retry_policy='retriable',
+            retry_policy='retry_any',
             max_retries=3,
         )
 
@@ -192,7 +196,7 @@ class TestAutoRetry(TransactionCase):
         task = Task.create_task(
             'test.task.type.noop',
             name='Auto-retry test',
-            retry_policy='retriable',
+            retry_policy='retry_any',
             max_retries=3,
         )
         task.action_assign(worker)
@@ -205,7 +209,7 @@ class TestAutoRetry(TransactionCase):
         # search for failed retriable tasks
         failed = Task.search([
             ('state', '=', 'failed'),
-            ('retry_policy', '=', 'retriable'),
+            ('retry_policy', '=', 'retry_any'),
             ('channel', 'in', ['default']),
             ('type_code', 'in', ['test.task.type.noop']),
         ], limit=10)
@@ -213,9 +217,10 @@ class TestAutoRetry(TransactionCase):
 
         # SQL already filters retry_count <= max_retries
         for t in failed:
-            t.action_retry()
+            t._action_auto_retry()
 
         self.assertEqual(task.state, 'pending')
+        self.assertEqual(task.retry_count, 1)
 
 
 class TestPlanTaskShortcut(TransactionCase):
@@ -297,3 +302,46 @@ class TestPlanTaskShortcut(TransactionCase):
 
         self.assertEqual(task.task_params['model'], 'res.partner')
         self.assertEqual(task.task_params['method'], 'write')
+
+
+class TestRetryPolicyBackwardCompat(TransactionCase):
+    """create_task() must accept pre-0.1.0 policy names and normalize them.
+
+    Extension modules that haven't been updated yet may still pass
+    'retriable' or 'non_retriable' either directly to create_task() or
+    via their AbstractTaskType._retry_policy class attribute.  Both paths
+    must succeed (no ValueError at ORM level) and emit a deprecation warning.
+    """
+
+    def test_non_retriable_explicit_arg_normalized(self):
+        """retry_policy='non_retriable' passed directly → 'no_retry'."""
+        Task = self.env['generic.task.queue.task']
+        with self.assertLogs(_COMPAT_LOGGER, level='WARNING') as cm:
+            task = Task.create_task(
+                'test.task.type.noop', retry_policy='non_retriable')
+        self.assertEqual(task.retry_policy, 'no_retry')
+        self.assertTrue(any('non_retriable' in msg for msg in cm.output))
+
+    def test_retriable_explicit_arg_normalized(self):
+        """retry_policy='retriable' passed directly → 'retry_any'."""
+        Task = self.env['generic.task.queue.task']
+        with self.assertLogs(_COMPAT_LOGGER, level='WARNING') as cm:
+            task = Task.create_task(
+                'test.task.type.noop', retry_policy='retriable')
+        self.assertEqual(task.retry_policy, 'retry_any')
+        self.assertTrue(any('retriable' in msg for msg in cm.output))
+
+    def test_old_policy_from_task_type_class(self):
+        """_retry_policy = 'retriable' on a task type class → normalized."""
+        registry = TaskTypeRegistry()
+        cls = registry.get_task_type('test.task.type.noop')
+        original = cls._retry_policy
+        cls._retry_policy = 'retriable'
+        try:
+            Task = self.env['generic.task.queue.task']
+            with self.assertLogs(_COMPAT_LOGGER, level='WARNING') as cm:
+                task = Task.create_task('test.task.type.noop')
+            self.assertEqual(task.retry_policy, 'retry_any')
+            self.assertTrue(any('retriable' in msg for msg in cm.output))
+        finally:
+            cls._retry_policy = original

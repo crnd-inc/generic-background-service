@@ -195,7 +195,7 @@ class TestParentWaitsForChildren(TransactionCase):
         children[0].sudo().action_done({'ok': True})
 
         # Child 1 fails with no retries
-        children[1].retry_policy = 'non_retriable'
+        children[1].retry_policy = 'no_retry'
         children[1].sudo().action_assign(self.worker)
         children[1].sudo().action_start()
         children[1].sudo().action_fail('permanent error')
@@ -214,7 +214,7 @@ class TestParentWaitsForChildren(TransactionCase):
 
         # Child 1 is retriable with retries left
         children[1].sudo().write({
-            'retry_policy': 'retriable',
+            'retry_policy': 'retry_any',
             'max_retries': 3,
             'retry_count': 0,
         })
@@ -237,7 +237,7 @@ class TestParentWaitsForChildren(TransactionCase):
 
         # Child 1 is retriable but retries are exhausted
         children[1].sudo().write({
-            'retry_policy': 'retriable',
+            'retry_policy': 'retry_any',
             'max_retries': 2,
             'retry_count': 2,
         })

@@ -15,7 +15,7 @@ class TestTaskCreation(TransactionCase):
         self.assertEqual(task.state, 'pending')
         self.assertEqual(task.channel, 'default')
         self.assertEqual(task.priority, 5)
-        self.assertEqual(task.retry_policy, 'non_retriable')
+        self.assertEqual(task.retry_policy, 'no_retry')
         self.assertEqual(task.max_retries, 0)
         self.assertEqual(task.retry_count, 0)
         self.assertEqual(task.progress, 0)
@@ -45,7 +45,7 @@ class TestTaskStateTransitions(TransactionCase):
         self.task = Task.create({
             'name': 'Lifecycle test',
             'type_code': 'test.task.type.noop',
-            'retry_policy': 'retriable',
+            'retry_policy': 'retry_any',
             'max_retries': 3,
         })
         self.worker = self.env['generic.task.queue.worker'].create({
@@ -94,7 +94,7 @@ class TestTaskStateTransitions(TransactionCase):
         self.assertTrue(self.task.date_completed)
 
     def test_failed_to_pending_retry(self):
-        """failed → pending via action_retry()."""
+        """failed → pending via action_retry(). retry_count unchanged."""
         worker = self.worker
         self.task.action_assign(worker)
         self.task.action_start()
@@ -103,12 +103,13 @@ class TestTaskStateTransitions(TransactionCase):
         self.assertEqual(self.task.state, 'pending')
         self.assertFalse(self.task.worker_id)
         self.assertFalse(self.task.task_error)
-        self.assertEqual(self.task.retry_count, 1)
+        self.assertEqual(self.task.retry_count, 0)
         self.assertEqual(self.task.progress, 0)
 
-    def test_retry_increments_count(self):
-        """Each action_retry() should increment retry_count;
-           action_fail does not.
+    def test_manual_retry_does_not_increment_count(self):
+        """Manual action_retry() never increments retry_count.
+           Only automatic retries (_action_auto_retry) do.
+           action_fail does not increment either.
         """
         worker = self.worker
 
@@ -118,43 +119,40 @@ class TestTaskStateTransitions(TransactionCase):
         self.assertEqual(self.task.retry_count, 0)
 
         self.task.action_retry()
-        self.assertEqual(self.task.retry_count, 1)
+        self.assertEqual(self.task.retry_count, 0)
 
         self.task.action_assign(worker)
         self.task.action_start()
         self.task.action_fail('Error 2')
-        self.assertEqual(self.task.retry_count, 1)
+        self.assertEqual(self.task.retry_count, 0)
 
         self.task.action_retry()
-        self.assertEqual(self.task.retry_count, 2)
+        self.assertEqual(self.task.retry_count, 0)
 
     def test_manual_retry_allowed_beyond_max(self):
-        """Manual action_retry() should work even when
-        max_retries exceeded. The limit only applies to
-        automatic retries."""
+        """Manual action_retry() works even when max_retries is exceeded.
+        The limit only applies to automatic retries."""
         worker = self.worker
-        self.task.max_retries = 1
+        self.task.sudo().write({'max_retries': 1, 'retry_count': 5})
 
         self.task.action_assign(worker)
         self.task.action_start()
         self.task.action_fail('Error')
-        # retry_count=0, max_retries=1 — auto-retry limit reached after 1 retry
-        # Manual retry should still work regardless of max_retries
         self.task.action_retry()
         self.assertEqual(self.task.state, 'pending')
-        # action_retry incremented retry_count
-        self.assertEqual(self.task.retry_count, 1)
+        # retry_count unchanged — manual retry does not count
+        self.assertEqual(self.task.retry_count, 5)
 
-    def test_retry_non_retriable_raises(self):
-        """action_retry() on non-retriable task should raise."""
+    def test_manual_retry_allowed_regardless_of_policy(self):
+        """Manual action_retry() is allowed for any retry_policy."""
         worker = self.worker
-        self.task.retry_policy = 'non_retriable'
+        self.task.sudo().write({'retry_policy': 'no_retry'})
 
         self.task.action_assign(worker)
         self.task.action_start()
         self.task.action_fail('Error')
-        with self.assertRaises(exceptions.ValidationError):
-            self.task.action_retry()
+        self.task.action_retry()
+        self.assertEqual(self.task.state, 'pending')
 
     def test_cancel_from_pending(self):
         """pending → cancelled."""
