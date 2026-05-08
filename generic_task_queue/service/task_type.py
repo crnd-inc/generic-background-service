@@ -143,6 +143,14 @@ class AbstractTaskType(abc.ABC):
             Override to add custom post-processing
             (e.g., notify user, trigger next step).
 
+            Keep this hook fast. It runs inside the same transaction as
+            execute() and action_done(), holding the task row lock. Slow
+            work should be enqueued as a separate child task instead.
+
+            The hook runs inside a savepoint: a DB error rolls back only
+            the hook's changes; execute() side-effects and action_done()
+            still commit normally.
+
             :param env: Odoo environment
             :param task: task record (state is still 'running'; action_done
                 is called by the worker after this hook returns)
@@ -154,6 +162,13 @@ class AbstractTaskType(abc.ABC):
 
             Override to add custom error handling
             (e.g., log to chatter, send alert).
+
+            Keep this hook fast. It runs inside the same transaction as
+            action_fail(), holding the task row lock. Slow work should be
+            enqueued as a separate task instead.
+
+            The hook runs inside a savepoint: a DB error rolls back only
+            the hook's changes; action_fail() still commits normally.
 
             :param env: Odoo environment
             :param task: task record (state is still 'running'; action_fail

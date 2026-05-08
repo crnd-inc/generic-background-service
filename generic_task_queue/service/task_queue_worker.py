@@ -313,9 +313,13 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 if task.state == 'waiting':
                     return
 
-                # Call on_success hook
+                # Call on_success hook inside a savepoint so a DB error
+                # in the hook rolls back only the hook's changes and leaves
+                # the outer transaction (execute() side-effects + action_done)
+                # intact.
                 try:
-                    task_type.on_success(env, task, result)
+                    with env.cr.savepoint():
+                        task_type.on_success(env, task, result)
                 except Exception:
                     _logger.error(
                         "Error in on_success hook for task %d",
@@ -367,8 +371,11 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                     registry = TaskTypeRegistry()
                     task_type_cls = registry.get_task_type(task.type_code)
                     task_type = task_type_cls()
+                    # Same savepoint guard as on_success: a DB error in the
+                    # hook must not abort the transaction before action_fail.
                     try:
-                        task_type.on_failure(env, task, exc)
+                        with env.cr.savepoint():
+                            task_type.on_failure(env, task, exc)
                     except Exception:
                         _logger.error(
                             "Error in on_failure hook for task %d",
