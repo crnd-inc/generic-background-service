@@ -1,6 +1,6 @@
 {
     "name": "Generic Background Service",
-    "version": "18.0.0.2.2",
+    "version": "18.0.0.2.3",
     "author": "Center of Research and Development",
     "website": "https://crnd.pro",
     "license": "LGPL-3",

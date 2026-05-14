@@ -75,6 +75,9 @@ class TaskQueueService(BackgroundService):
     _die_on_stuck_timeout = 300
     _default_task_timeout = 3600  # 1 hour safety net
 
+    def _get_channels(self):
+        return self._channels
+
     def _on_service_stuck(self):
         _logger.error(
             "Service %s has been stuck for %.0f seconds, "
@@ -108,7 +111,7 @@ class TaskQueueService(BackgroundService):
         return {
             'service_name': self._name,
             'task_types': self._task_types,  # empty = all types
-            'channels': self._channels,
+            'channels': self._get_channels(),
             'max_parallel_jobs': self._get_max_parallel_jobs(),
             'default_task_timeout': self._default_task_timeout,
         }

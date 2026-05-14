@@ -42,7 +42,7 @@ class BackgroundServiceRegistry:
                 "May be you have to add module that defines service '%s' to"
                 "system_wide_modules config param.", name)
             return
-        cls._registered_services[name].append(service_cls)
+        cls._registered_services[name].insert(0, service_cls)
 
     @classmethod
     def initialize(cls):
@@ -61,7 +61,7 @@ class BackgroundServiceRegistry:
 
             This method will create new class for this service:
 
-                class MyService(MyServiceDefinition, MyServiceExtension)
+                class MyService(MyServiceExtension, MyServiceDefinition)
 
             The resulting class will be stored in _initialized_services attr
         """
