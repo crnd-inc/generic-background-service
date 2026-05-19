@@ -8,9 +8,18 @@ Generic Background Migration
 .. |badge5| image:: https://img.shields.io/badge/maintainer-CR&D-purple.png
     :target: https://crnd.pro/
 
+.. |badgeexp| image:: https://img.shields.io/badge/status-experimental-orange.png
+    :alt: Experimental
 
-|badge2| |badge5|
 
+|badge2| |badge5| |badgeexp|
+
+.. warning::
+
+   **This module is experimental.** The API (file naming conventions,
+   ``migrate`` function signature, scheduling behaviour) may change in future
+   releases without a deprecation period. Do not use it in production without
+   thorough testing.
 
 File-based one-shot background data migrations for Odoo, built on top of
 `Generic Task Queue <https://github.com/crnd-inc/generic-background-service>`_.
