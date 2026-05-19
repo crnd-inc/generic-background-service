@@ -35,6 +35,16 @@ class BackgroundServiceRegistry:
             :param str name: name of service to register definition for
             :param type service_cls: Class that represents
                  definition of service
+
+            **MRO ordering**: classes are inserted at position 0, so the
+            *last*-registered class ends up first in the list and therefore
+            first (highest priority) in the MRO of the composed class
+            created by ``initialize()``.  Because Odoo loads modules in
+            dependency order (dependencies first), an extension module is
+            always loaded *after* the module it depends on, which means
+            its definition is registered last and correctly takes
+            precedence via ``super()``.  This mirrors the Odoo ORM's
+            own "last ``_inherit`` wins" convention.
         """
         if not cls._registration_allowed:
             _logger.warning(

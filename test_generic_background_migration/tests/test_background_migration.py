@@ -413,3 +413,71 @@ class TestMigrationHooks(TransactionCase):
         self.assertTrue(self.rec.date_completed)
         self.assertEqual(result['children_done'], 1)
         self.assertEqual(result['children_cancelled'], 1)
+
+
+# ---------------------------------------------------------------------------
+# BackgroundServiceRegistry composition
+# ---------------------------------------------------------------------------
+
+class TestComposedServiceChannels(TransactionCase):
+    """BackgroundServiceRegistry must compose generic.task.queue.service
+    so that the generic_background_migration extension has higher MRO
+    priority than the base TaskQueueService, and _get_channels() returns
+    both 'default' and 'background_migration'.
+    """
+
+    _SERVICE_NAME = 'generic.task.queue.service'
+
+    @classmethod
+    def _get_composed_cls(cls):
+        from odoo.addons.generic_background_service.service.background_service_registry import (  # noqa: E501
+            BackgroundServiceRegistry,
+        )
+        # Trigger initialize() if this is the first call in this process.
+        # The singleton guard makes repeated calls safe.
+        BackgroundServiceRegistry()
+        return BackgroundServiceRegistry.get_service_class(cls._SERVICE_NAME)
+
+    def test_service_present_in_registry(self):
+        """Composed service is present in the initialized registry."""
+        self.assertIsNotNone(self._get_composed_cls())
+
+    def test_get_channels_contains_default_and_background_migration(self):
+        """_get_channels() on the composed service includes both channels."""
+        cls = self._get_composed_cls()
+        channels = cls.__new__(cls)._get_channels()
+        self.assertIn('default', channels)
+        self.assertIn('background_migration', channels)
+
+    def test_get_channels_order(self):
+        """default precedes background_migration in the channel list."""
+        cls = self._get_composed_cls()
+        channels = cls.__new__(cls)._get_channels()
+        self.assertEqual(channels, ['default', 'background_migration'])
+
+    def test_migration_extension_precedes_base_in_mro(self):
+        """Last-registered class (extension) has higher MRO priority than
+        the base, so its _get_channels() override is reached first and
+        super() correctly delegates to the base."""
+        from odoo.addons.generic_task_queue.service.task_queue_service import (
+            TaskQueueService as Base,
+        )
+        from odoo.addons.generic_background_migration.service.task_queue_service import (  # noqa: E501
+            TaskQueueService as Extension,
+        )
+        composed = self._get_composed_cls()
+        mro = composed.__mro__
+        self.assertIn(Base, mro)
+        self.assertIn(Extension, mro)
+        self.assertLess(
+            mro.index(Extension), mro.index(Base),
+            "Extension must appear before Base in MRO "
+            "(last-registered = highest priority)",
+        )
+
+    def test_get_worker_params_channels(self):
+        """get_worker_params()['channels'] reflects the composed channels."""
+        cls = self._get_composed_cls()
+        params = cls.__new__(cls).get_worker_params()
+        self.assertIn('default', params['channels'])
+        self.assertIn('background_migration', params['channels'])
