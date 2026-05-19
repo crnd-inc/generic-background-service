@@ -569,21 +569,26 @@ class GenericTaskQueueTask(models.Model):
         if failed_children:
             return
 
-        # All children done (or cancelled) — call the hook
-        # and complete the parent
+        # All children done (or cancelled) — call the hook and complete
+        # the parent. Wrap in a savepoint so a DB error inside the hook
+        # rolls back only the hook's changes; action_done() still commits.
         from ..service.task_type_registry import TaskTypeRegistry
         registry = TaskTypeRegistry()
+        result = None
         try:
             task_type_cls = registry.get_task_type(self.type_code)
-            task_type = task_type_cls()
-            result = task_type.on_all_children_done(self.env, self)
+            with self.env.cr.savepoint():
+                task_type = task_type_cls()
+                result = task_type.on_all_children_done(self.env, self)
         except KeyError:
-            result = None
+            _logger.debug(
+                "Task type %r not found for task %d, "
+                "skipping on_all_children_done",
+                self.type_code, self.id)
         except Exception:
             _logger.error(
                 "Error in on_all_children_done for task %d",
                 self.id, exc_info=True)
-            result = None
 
         self.action_done(result)
 

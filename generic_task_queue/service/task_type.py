@@ -228,6 +228,12 @@ class AbstractTaskType(abc.ABC):
 
             Return value becomes the parent's task_result.
 
+            Keep this hook fast and free of operations that could fail.
+            It runs inside a savepoint: a DB error rolls back only the
+            hook's changes; ``action_done()`` still commits normally.
+            For complex aggregation or validation that could fail, enqueue
+            a separate child task instead.
+
             :param env: Odoo environment
             :param parent_task: the parent task record
             :return: aggregated result (stored as JSON in parent)
