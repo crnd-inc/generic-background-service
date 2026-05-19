@@ -8,6 +8,7 @@
     "category": "Technical Settings",
     "depends": [
         "generic_background_service",
+        "base_setup",
         "bus",
     ],
     "data": [
@@ -15,6 +16,7 @@
         "security/ir.model.access.csv",
         "security/ir_rule.xml",
         "views/generic_task_queue_task_views.xml",
+        "views/res_config_settings_views.xml",
         "data/cron.xml",
     ],
     "assets": {

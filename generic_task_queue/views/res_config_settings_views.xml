@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_task_queue_configuration" model="ir.actions.act_window">
+        <field name="name">Settings</field>
+        <field name="res_model">res.config.settings</field>
+        <field name="view_mode">form</field>
+        <field name="context">{'module': 'generic_task_queue'}</field>
+    </record>
+
+    <menuitem id="menu_task_queue_configuration"
+              name="Configuration"
+              parent="generic_task_queue.menu_task_queue_root"
+              action="action_task_queue_configuration"
+              groups="generic_task_queue.group_task_queue_manager"
+              sequence="90"/>
+
+    <record id="res_config_settings_view_form" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.inherit.generic_task_queue</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base_setup.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app data-string="Task Queue"
+                     string="Task Queue"
+                     name="generic_task_queue"
+                     groups="generic_task_queue.group_task_queue_manager">
+                    <block title="Cleanup" name="gtq_vacuum_setting_container">
+                        <setting string="Task Retention"
+                                 help="Number of days to keep completed, failed, and cancelled tasks. Set to 0 to disable automatic cleanup.">
+                            <div class="d-flex align-items-center gap-2">
+                                <field name="gtq_vacuum_days" class="o_field_integer"/>
+                                <span>days (0 = disabled)</span>
+                            </div>
+                        </setting>
+                        <setting string="Vacuum Batch Size"
+                                 help="Maximum number of tasks deleted per vacuum cron run.">
+                            <field name="gtq_vacuum_batch_size"/>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+</odoo>

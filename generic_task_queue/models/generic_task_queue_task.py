@@ -961,7 +961,7 @@ class GenericTaskQueueTask(models.Model):
 
             Retention period and batch size are configurable via
             System Parameters:
-              generic_task_queue.vacuum_days       (default: 30)
+              generic_task_queue.vacuum_days       (default: 7)
               generic_task_queue.vacuum_batch_size (default: 1000)
 
             Set vacuum_days to 0 to disable cleanup entirely.
@@ -970,7 +970,7 @@ class GenericTaskQueueTask(models.Model):
             are removed automatically via their ondelete='cascade'.
         """
         get_param = self.env['ir.config_parameter'].sudo().get_param
-        days = int(get_param('generic_task_queue.vacuum_days', 30))
+        days = int(get_param('generic_task_queue.vacuum_days', 7))
         if days <= 0:
             return
         batch_size = int(
