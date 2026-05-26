@@ -14,5 +14,6 @@
     ],
     "data": [
         "security/ir.model.access.csv",
+        "views/generic_background_migration_views.xml",
     ],
 }

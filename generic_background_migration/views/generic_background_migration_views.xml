@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <record id="view_generic_background_migration_list"
+            model="ir.ui.view">
+        <field name="model">generic.background.migration</field>
+        <field name="arch" type="xml">
+            <list string="Background Migrations" decoration-success="state == 'done'"
+                  decoration-danger="state == 'failed'"
+                  decoration-muted="state == 'pending'">
+                <field name="module"/>
+                <field name="module_version"/>
+                <field name="migration_name"/>
+                <field name="state"/>
+                <field name="task_id" optional="show"/>
+                <field name="date_completed" optional="show"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_generic_background_migration_form"
+            model="ir.ui.view">
+        <field name="model">generic.background.migration</field>
+        <field name="arch" type="xml">
+            <form string="Background Migration">
+                <header>
+                    <button name="action_force_reschedule"
+                            string="Force Reschedule"
+                            type="object"
+                            class="btn-warning"
+                            groups="base.group_system"
+                            invisible="state != 'failed'"
+                            confirm="Reset this migration to pending and re-enqueue it?"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="pending,done,failed"
+                           readonly="1"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="module" readonly="1"/>
+                            <field name="module_version" readonly="1"/>
+                            <field name="migration_name" readonly="1"/>
+                        </group>
+                        <group>
+                            <field name="task_id" readonly="1"/>
+                            <field name="date_completed" readonly="1"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_generic_background_migration"
+            model="ir.actions.act_window">
+        <field name="name">Background Migrations</field>
+        <field name="res_model">generic.background.migration</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem id="menu_task_queue_background_migrations"
+              name="Background Migrations"
+              parent="generic_task_queue.menu_task_queue_configuration"
+              action="action_generic_background_migration"
+              groups="base.group_system"
+              sequence="25"/>
+
+</odoo>

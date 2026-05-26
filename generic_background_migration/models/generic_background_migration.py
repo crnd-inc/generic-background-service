@@ -145,6 +145,14 @@ class GenericBackgroundMigration(models.Model):
             "Scheduled new migration %s/%s/%s",
             module, version, migration_name)
 
+    def action_force_reschedule(self):
+        """Reset a failed migration to pending and re-enqueue its task."""
+        for rec in self.sudo():
+            if rec.state != 'failed':
+                continue
+            rec.write({'state': 'pending', 'date_completed': False})
+            rec._enqueue_task()
+
     def _enqueue_task(self):
         unique_key = 'migration|%s|%s|%s' % (
             self.module, self.module_version, self.migration_name)
