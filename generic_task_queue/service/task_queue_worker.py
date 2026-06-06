@@ -299,11 +299,16 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 task_type_cls = registry.get_task_type(task.type_code)
                 task_type = task_type_cls()
 
-                # Switch to creating user's context so access
-                # rules apply. Task types that need superuser
-                # access can explicitly call sudo().
+                # Run execute()/hooks as the creating user, with the task
+                # record bound to that same user — so all business-model
+                # access (and any task.env use) is least-privilege and
+                # subject to the creator's access rules. Framework writes of
+                # protected fields (action_*, phase_data, …) sudo() internally
+                # so elevation is explicit and auditable. The worker keeps its
+                # own SUPERUSER-bound `task` for state transitions below.
                 user_env = env(user=task.create_uid.id)
-                result = task_type.execute(user_env, task)
+                user_task = task.with_env(user_env)
+                result = task_type.execute(user_env, user_task)
 
                 # If execute() called action_wait_children(),
                 # the task is now in 'waiting' state — don't
@@ -319,7 +324,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 # intact.
                 try:
                     with env.cr.savepoint():
-                        task_type.on_success(env, task, result)
+                        task_type.on_success(user_env, user_task, result)
                 except Exception:
                     _logger.error(
                         "Error in on_success hook for task %d",
@@ -373,9 +378,12 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                     task_type = task_type_cls()
                     # Same savepoint guard as on_success: a DB error in the
                     # hook must not abort the transaction before action_fail.
+                    # Run the hook as the creating user (see execute() above).
+                    user_env = env(user=task.create_uid.id)
+                    user_task = task.with_env(user_env)
                     try:
                         with env.cr.savepoint():
-                            task_type.on_failure(env, task, exc)
+                            task_type.on_failure(user_env, user_task, exc)
                     except Exception:
                         _logger.error(
                             "Error in on_failure hook for task %d",
@@ -645,7 +653,14 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 registry = TaskTypeRegistry()
                 task_type_cls = registry.get_task_type(parent.type_code)
                 task_type = task_type_cls()
-                task_type.on_child_done(env, parent, child_task)
+                # Run the hook as the parent's creator (see execute()): the
+                # task type's logic is least-privilege; framework writes
+                # sudo() internally.
+                user_env = env(user=parent.create_uid.id)
+                task_type.on_child_done(
+                    user_env,
+                    parent.with_env(user_env),
+                    child_task.with_env(user_env))
         except Exception:
             _logger.error(
                 "Error in on_child_done for child task %d",

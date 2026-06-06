@@ -400,7 +400,9 @@ class MultiPhaseTaskType(AbstractTaskType):
                 children = task.spawn_children(specs=specs)
                 phase_data = dict(task.phase_data or {})
                 phase_data['child_ids'] = children.ids
-                task.write({
+                # phase / phase_data are protected fields — write via explicit
+                # sudo() so this works on a task bound to the creating user.
+                task.sudo().write({
                     'phase': phase_index,
                     'phase_data': phase_data,
                 })
@@ -409,7 +411,7 @@ class MultiPhaseTaskType(AbstractTaskType):
                 return True
             phase_index += 1
         # Pipeline exhausted without spawning any children.
-        task.write({'phase': phase_index})
+        task.sudo().write({'phase': phase_index})
         return False
 
     @staticmethod

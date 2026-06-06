@@ -413,14 +413,17 @@ class GenericTaskQueueTask(models.Model):
     def action_wait_children(self):
         """ Transition: running → waiting.
 
-            Called by task types that spawn children and need
-            to wait for all of them to complete before finishing.
+            Called by task types (on a task bound to the creating user) that
+            spawn children and need to wait for all of them to complete
+            before finishing. Writes ``state`` (a protected field) via an
+            explicit ``sudo()`` so it works regardless of the caller's user.
         """
         self._check_transition('waiting')
-        self.write({
+        task_su = self.sudo()
+        task_su.write({
             'state': 'waiting',
         })
-        self._notify_state_change()
+        task_su._notify_state_change()
 
     @api.private
     def action_fail(self, error=None, error_data=None, runner_id=None):
@@ -586,11 +589,18 @@ class GenericTaskQueueTask(models.Model):
         from ..service.task_type_registry import TaskTypeRegistry
         registry = TaskTypeRegistry()
         result = None
+        # Run the hook as the pipeline's creator (this method runs in the
+        # worker's SUPERUSER poll context). The task type's logic is thus
+        # least-privilege; framework writes sudo() internally. `self` stays
+        # SUPERUSER-bound for the re-arm check and action_done() below.
+        creator = self.create_uid
+        hook_env = self.env(user=creator.id) if creator else self.env
+        hook_parent = self.with_env(hook_env)
         try:
             task_type_cls = registry.get_task_type(self.type_code)
             with self.env.cr.savepoint():
                 task_type = task_type_cls()
-                result = task_type.on_all_children_done(self.env, self)
+                result = task_type.on_all_children_done(hook_env, hook_parent)
         except KeyError:
             _logger.debug(
                 "Task type %r not found for task %d, "
@@ -650,7 +660,9 @@ class GenericTaskQueueTask(models.Model):
         self.ensure_one()
         data = dict(self.phase_data or {})
         data.update(vals)
-        self.write({'phase_data': data})
+        # phase_data is a protected field — write via explicit sudo() so this
+        # works when called on a task bound to the (non-super) creating user.
+        self.sudo().write({'phase_data': data})
 
     @api.private
     @api.model

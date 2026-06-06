@@ -42,6 +42,9 @@ Key features:
 - **Task timeout** -- workers detect and fail tasks that exceed their timeout
 - **Parent/child tasks** -- split large jobs into sub-tasks with automatic
   result aggregation (``on_all_children_done`` hook)
+- **Multi-phase pipelines** -- a single task runs sequential waves of child
+  tasks under one root (``MultiPhaseTaskType`` with ``_phases`` /
+  ``plan_phase``), with phase-aware progress and one cascading cancel
 - **Worker health monitoring** -- heartbeat-based detection of dead workers
   with automatic task reassignment
 - **Channel-based routing** -- route tasks to specific workers via channels

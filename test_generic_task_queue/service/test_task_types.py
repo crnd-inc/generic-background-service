@@ -221,6 +221,26 @@ class TestTaskTypeMixedWave(MultiPhaseTaskType):
         return {'types': sorted({cr.task.type_code for cr in last_results})}
 
 
+class TestTaskTypeIdentityProbe(MultiPhaseTaskType):
+    """Records the (env.uid, env.su) seen by execute() and on_all_children_done
+    so tests can assert the framework runs them as the creating user (not
+    SUPERUSER). Also proves the protected-field writes in _start_wave /
+    action_wait_children succeed under a non-super user (explicit sudo).
+    """
+    _name = 'test.task.type.identity.probe'
+    _singleton = False
+    _phases = ['only']
+    seen = {}
+
+    def plan_phase(self, env, task, phase, prev_results):
+        type(self).seen['execute'] = (env.uid, env.su)
+        return ('test.task.type.noop', [{'i': 0}])
+
+    def on_all_children_done(self, env, parent_task):
+        type(self).seen['on_all_children_done'] = (env.uid, env.su)
+        return super().on_all_children_done(env, parent_task)
+
+
 class TestTaskTypeReArm(AbstractTaskType):
     """Plain (non-MultiPhase) task type exercising the re-arm primitive.
 

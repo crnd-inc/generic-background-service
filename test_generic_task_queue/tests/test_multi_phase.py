@@ -181,6 +181,76 @@ class TestMultiPhaseLifecycle(_MultiPhaseBase):
         self.assertEqual(set(wave_b.mapped('state')), {'cancelled'})
 
 
+class TestExecutionIdentity(_MultiPhaseBase):
+    """execute() and the lifecycle hooks must run as the task's creator
+    (least privilege), while protected-field framework writes still succeed
+    via explicit sudo().
+    """
+
+    def setUp(self):
+        super().setUp()
+        from ..service.test_task_types import TestTaskTypeIdentityProbe
+        self.Probe = TestTaskTypeIdentityProbe
+        self.Probe.seen.clear()
+        self.creator = self.env['res.users'].create({
+            'name': 'Pipeline Op',
+            'login': 'pipeline_op_identity',
+            'groups_id': [(6, 0, [self.env.ref('base.group_user').id])],
+        })
+
+    def _bind(self, task):
+        """Mimic the worker: user-scoped env + user-bound task record."""
+        user_env = self.env(user=self.creator.id)
+        return user_env, task.with_env(user_env)
+
+    def _start_as_creator(self):
+        parent = self.Task.with_user(self.creator).create_task(
+            'test.task.type.identity.probe', name='Probe')
+        parent.sudo().action_assign(self.worker)
+        parent.sudo().action_start()
+        user_env, user_task = self._bind(parent)
+        self.Probe().execute(user_env, user_task)
+        return parent
+
+    def test_execute_runs_as_creator_not_superuser(self):
+        self._start_as_creator()
+        self.assertEqual(self.Probe.seen['execute'], (self.creator.id, False))
+
+    def test_execute_framework_writes_succeed_under_creator(self):
+        """_start_wave's phase/phase_data writes + action_wait_children must
+        succeed even though execute ran as a non-super user."""
+        parent = self._start_as_creator().sudo()
+        self.assertEqual(parent.state, 'waiting')
+        self.assertEqual(parent.phase, 0)
+        self.assertTrue((parent.phase_data or {}).get('child_ids'))
+
+    def test_on_all_children_done_runs_as_creator(self):
+        parent = self._start_as_creator()
+        self._complete(self._current_wave(parent.sudo()), 'done')
+        # Real worker poll path — binds the creator internally.
+        parent.sudo()._check_waiting_parent()
+        self.assertEqual(
+            self.Probe.seen['on_all_children_done'], (self.creator.id, False))
+        self.assertEqual(parent.sudo().state, 'done')
+
+    def test_protected_writes_use_explicit_sudo(self):
+        """action_wait_children / store_phase_data write protected fields and
+        must work when called on a task bound to the (non-super) creator."""
+        parent = self.Task.with_user(self.creator).create_task(
+            'test.task.type.noop', name='FW')
+        parent.sudo().action_assign(self.worker)
+        parent.sudo().action_start()
+
+        user_task = parent.with_user(self.creator)
+        self.assertFalse(user_task.env.su)
+
+        user_task.action_wait_children()              # protected 'state'
+        self.assertEqual(parent.sudo().state, 'waiting')
+
+        user_task.store_phase_data(note='kept')        # protected 'phase_data'
+        self.assertEqual((parent.sudo().phase_data or {}).get('note'), 'kept')
+
+
 class TestHeterogeneousWave(_MultiPhaseBase):
     """A single phase may fan out children of more than one task type."""
 
