@@ -1,4 +1,5 @@
-from odoo.addons.generic_task_queue import AbstractTaskType
+from odoo.addons.generic_task_queue import (
+    AbstractTaskType, MultiPhaseTaskType)
 
 
 class TestTaskTypeNoOp(AbstractTaskType):
@@ -137,3 +138,82 @@ class TestRoutingCustomChannelType(AbstractTaskType):
 
     def execute(self, env, task):
         return {}
+
+
+class TestTaskTypeTwoPhase(MultiPhaseTaskType):
+    """Two-phase pipeline used to test the re-arm primitive and _phases.
+
+    Phase 'a' fans out ``params['a_count']`` echo children (default 2).
+    Phase 'b' fans out one echo child per *successful* phase-'a' child,
+    demonstrating that prev_results carries only the previous wave.
+    """
+    _name = 'test.task.type.two.phase'
+    _singleton = False
+    _phases = ['a', 'b']
+
+    def plan_phase(self, env, task, phase, prev_results):
+        if phase == 'a':
+            n = task.task_params.get('a_count', 2)
+            return ('test.task.type.echo',
+                    [{'phase': 'a', 'i': i} for i in range(n)])
+        if phase == 'b':
+            done = [cr for cr in prev_results if cr.state == 'done']
+            return ('test.task.type.echo',
+                    [{'phase': 'b', 'i': i} for i in range(len(done))])
+        return None
+
+    def aggregate_result(self, env, task, last_results):
+        return {'b_children': len(last_results)}
+
+
+class TestTaskTypeSkipPhase(MultiPhaseTaskType):
+    """Multi-phase pipeline whose first phase yields no children.
+
+    Verifies that an empty phase is skipped and the next phase runs.
+    """
+    _name = 'test.task.type.skip.phase'
+    _singleton = False
+    _phases = ['empty', 'real']
+
+    def plan_phase(self, env, task, phase, prev_results):
+        if phase == 'real':
+            return ('test.task.type.echo', [{'x': 1}])
+        # 'empty' phase → no children
+        return None
+
+
+class TestTaskTypeEmptyPipeline(MultiPhaseTaskType):
+    """Multi-phase pipeline where every phase is empty.
+
+    The pipeline must complete immediately via the normal done path.
+    """
+    _name = 'test.task.type.empty.pipeline'
+    _singleton = False
+    _phases = ['nothing']
+
+    def plan_phase(self, env, task, phase, prev_results):
+        return None
+
+
+class TestTaskTypeReArm(AbstractTaskType):
+    """Plain (non-MultiPhase) task type exercising the re-arm primitive.
+
+    execute() spawns wave 1. on_all_children_done() spawns wave 2 the first
+    time it runs (returning None, so the parent stays 'waiting'), then on
+    the second invocation returns a result so the parent completes. Proves
+    re-arm works without the MultiPhaseTaskType machinery.
+    """
+    _name = 'test.task.type.rearm'
+    _singleton = False
+
+    def execute(self, env, task):
+        task.spawn_children('test.task.type.noop', [{'wave': 1}])
+        task.action_wait_children()
+
+    def on_all_children_done(self, env, parent_task):
+        # First invocation (only wave 1 exists) → spawn wave 2 and re-arm.
+        # Second invocation (both waves exist) → finalize.
+        if len(parent_task.child_ids) < 2:
+            parent_task.spawn_children('test.task.type.noop', [{'wave': 2}])
+            return None
+        return {'finished': True}

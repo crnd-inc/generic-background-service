@@ -230,6 +230,18 @@ class GenericTaskQueueTask(models.Model):
         string='Sub-tasks')
     child_count = fields.Integer(
         compute='_compute_child_count', string='Sub-task Count')
+    phase = fields.Integer(
+        default=0, readonly=True,
+        help="For multi-phase pipeline tasks (MultiPhaseTaskType): index "
+             "of the phase whose child wave is currently running. "
+             "0 for ordinary tasks.")
+    phase_data = fields.Json(
+        readonly=True,
+        help="For multi-phase pipeline tasks (MultiPhaseTaskType): JSON blob "
+             "holding per-pipeline phase state. The framework stores the "
+             "current wave's child ids under the reserved 'child_ids' key "
+             "(used to isolate per-wave results across phases); task types "
+             "may persist additional state via store_phase_data().")
     date_created = fields.Datetime(
         default=fields.Datetime.now, required=True,
         index=True, readonly=True)
@@ -590,7 +602,56 @@ class GenericTaskQueueTask(models.Model):
                 "Error in on_all_children_done for task %d",
                 self.id, exc_info=True)
 
+        # The hook may have spawned a new wave of children (multi-phase /
+        # orchestrator task types). on_all_children_done ran inline in this
+        # same transaction, so re-reading child_ids here is race-free: if a
+        # fresh wave is now live, stay in 'waiting' and let the next poll
+        # cycle re-evaluate this parent when that wave finishes.
+        self.invalidate_recordset(['child_ids', 'state'])
+        if self.state == 'waiting' and self.child_ids.filtered(
+                lambda c: c.state in ACTIVE_STATES):
+            return
+
         self.action_done(result)
+
+    @api.private
+    def spawn_children(self, type_code, params_list, **common_vals):
+        """ Spawn a new wave of child tasks under this parent.
+
+            Convenience wrapper over :meth:`create_children` for use from
+            inside ``execute()``, ``on_all_children_done()`` or
+            ``on_child_done()``. The parent must be in (or transition to)
+            the ``waiting`` state after spawning; the worker keeps it there
+            until the new wave finishes, then re-invokes
+            ``on_all_children_done`` — which is what makes multi-phase
+            pipelines possible (a parent can spawn more than one wave).
+
+            :param str type_code: task type for all children in the wave
+            :param list params_list: list of task_params dicts
+            :param common_vals: common field values applied to all children
+                (e.g. channel, priority)
+            :return: recordset of created child tasks
+        """
+        self.ensure_one()
+        return self.env['generic.task.queue.task'].create_children(
+            self, type_code, params_list, **common_vals)
+
+    @api.private
+    def store_phase_data(self, **vals):
+        """ Merge values into this task's ``phase_data`` JSON blob.
+
+            Lets multi-phase pipelines persist small bits of state across
+            phases. Existing keys are preserved; passed keys are updated.
+
+            The ``child_ids`` key is reserved by the framework for the
+            current wave's children — do not overwrite it.
+
+            :param vals: JSON-serializable key/values to merge
+        """
+        self.ensure_one()
+        data = dict(self.phase_data or {})
+        data.update(vals)
+        self.write({'phase_data': data})
 
     @api.private
     @api.model
