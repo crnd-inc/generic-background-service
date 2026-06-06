@@ -195,6 +195,32 @@ class TestTaskTypeEmptyPipeline(MultiPhaseTaskType):
         return None
 
 
+class TestTaskTypeMixedWave(MultiPhaseTaskType):
+    """Single-phase pipeline whose wave mixes two child types.
+
+    Phase 'work' fans out 2 echo 'chunk' children (homogeneous part) plus a
+    single 'noop' notify child routed to a custom channel — exercising both
+    the (type_code, params) tuple form and the dict-spec form in one wave.
+    """
+    _name = 'test.task.type.mixed.wave'
+    _singleton = False
+    _phases = ['work']
+
+    def plan_phase(self, env, task, phase, prev_results):
+        return [
+            ('test.task.type.echo', {'kind': 'chunk', 'i': 0}),
+            ('test.task.type.echo', {'kind': 'chunk', 'i': 1}),
+            {'type_code': 'test.task.type.noop',
+             'params': {'kind': 'notify'},
+             'channel': 'fast',
+             'priority': 1},
+        ]
+
+    def aggregate_result(self, env, task, last_results):
+        # prev_results spans the whole heterogeneous wave, both types.
+        return {'types': sorted({cr.task.type_code for cr in last_results})}
+
+
 class TestTaskTypeReArm(AbstractTaskType):
     """Plain (non-MultiPhase) task type exercising the re-arm primitive.
 

@@ -558,8 +558,7 @@ class GenericTaskQueueTask(models.Model):
 
         # If any child is still in progress, keep waiting.
         # 'stuck' children are still potentially in progress.
-        active_states = {'pending', 'assigned', 'running', 'stuck', 'waiting'}
-        if child_states & active_states:
+        if child_states & ACTIVE_STATES:
             return
 
         # All children are in terminal states (done/failed/cancelled)
@@ -615,7 +614,8 @@ class GenericTaskQueueTask(models.Model):
         self.action_done(result)
 
     @api.private
-    def spawn_children(self, type_code, params_list, **common_vals):
+    def spawn_children(self, type_code=None, params_list=None, *,
+                       specs=None, **common_vals):
         """ Spawn a new wave of child tasks under this parent.
 
             Convenience wrapper over :meth:`create_children` for use from
@@ -626,15 +626,14 @@ class GenericTaskQueueTask(models.Model):
             ``on_all_children_done`` — which is what makes multi-phase
             pipelines possible (a parent can spawn more than one wave).
 
-            :param str type_code: task type for all children in the wave
-            :param list params_list: list of task_params dicts
-            :param common_vals: common field values applied to all children
-                (e.g. channel, priority)
+            Accepts the same homogeneous / heterogeneous calling forms as
+            :meth:`create_children`.
+
             :return: recordset of created child tasks
         """
         self.ensure_one()
         return self.env['generic.task.queue.task'].create_children(
-            self, type_code, params_list, **common_vals)
+            self, type_code, params_list, specs=specs, **common_vals)
 
     @api.private
     def store_phase_data(self, **vals):
@@ -655,30 +654,64 @@ class GenericTaskQueueTask(models.Model):
 
     @api.private
     @api.model
-    def create_children(self, parent_task, type_code, params_list,
-                        **common_vals):
-        """ Create multiple child tasks for a parent task.
+    def create_children(self, parent_task, type_code=None, params_list=None,
+                        *, specs=None, **common_vals):
+        """ Create a wave of child tasks under a parent task.
+
+            Two mutually-exclusive calling forms:
+
+            - **Homogeneous** — pass ``type_code`` + ``params_list`` (a list of
+              task_params dicts). ``common_vals`` (e.g. ``channel``,
+              ``priority``) apply to every child.
+            - **Heterogeneous** — pass ``specs``, a list of per-child dicts,
+              each ``{'type_code': …, 'params': …, **field_overrides}``. Mixes
+              task types and per-child field overrides within one wave.
+
+            Children are named ``"{parent.name} [i/total]"`` across the whole
+            wave and inherit the parent's channel unless overridden.
 
             :param parent_task: parent task record
-            :param str type_code: task type for all children
-            :param list params_list: list of task_params dicts
-            :param common_vals: common field values applied
-                to all children (e.g., channel, priority)
             :return: recordset of created child tasks
         """
+        if specs is None:
+            specs = [
+                {'type_code': type_code, 'params': params, **common_vals}
+                for params in (params_list or [])
+            ]
+        elif type_code is not None or params_list is not None or common_vals:
+            raise exceptions.ValidationError(self.env._(
+                "create_children(): pass either (type_code, params_list) "
+                "or specs, not both."))
+
+        total = len(specs)
         vals_list = []
-        for i, params in enumerate(params_list):
+        for i, spec in enumerate(specs):
+            spec = dict(spec)
+            child_type = spec.pop('type_code')
+            params = spec.pop('params', None)
             vals = {
-                'name': '%s [%d/%d]' % (
-                    parent_task.name, i + 1, len(params_list)),
-                'type_code': type_code,
+                'name': '%s [%d/%d]' % (parent_task.name, i + 1, total),
+                'type_code': child_type,
                 'parent_id': parent_task.id,
-                'task_params': params,
+                'task_params': params or {},
                 'channel': parent_task.channel,
             }
-            vals.update(common_vals)
+            vals.update(spec)  # remaining keys = per-child field overrides
             vals_list.append(vals)
-        return self.create(vals_list)
+
+        # Children must belong to the task's creator — not to whoever's
+        # transaction spawns them.  This matters for the later phases of a
+        # multi-phase pipeline: those waves are spawned from
+        # on_all_children_done(), which the worker runs in a SUPERUSER poll
+        # context.  Without this, the children would inherit
+        # create_uid = SUPERUSER and the worker would execute them with the
+        # wrong identity (wrong access rights and, e.g., no user credentials),
+        # instead of as the user who started the pipeline.
+        model = self
+        creator = parent_task.create_uid
+        if creator and creator.id != self.env.uid:
+            model = self.with_user(creator.id)
+        return model.create(vals_list)
 
     @api.private
     def update_progress(self, value):

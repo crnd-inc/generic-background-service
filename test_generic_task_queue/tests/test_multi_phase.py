@@ -128,6 +128,45 @@ class TestMultiPhaseLifecycle(_MultiPhaseBase):
             set(parent.phase_data['child_ids']),
             set(self._current_wave(parent).ids))
 
+    def test_phase_children_belong_to_creator_not_superuser(self):
+        """Every phase's child wave must be owned by the pipeline's creator,
+        even though later phases are spawned from the SUPERUSER worker poll
+        context (_check_waiting_parent). Otherwise the worker would execute
+        them with the wrong identity."""
+        from odoo.addons.generic_task_queue.service.task_type_registry \
+            import TaskTypeRegistry
+
+        creator = self.env['res.users'].create({
+            'name': 'Pipeline Op',
+            'login': 'pipeline_op_phase',
+            'groups_id': [(6, 0, [self.env.ref('base.group_user').id])],
+        })
+        self.assertNotEqual(creator, self.env.ref('base.user_root'))
+
+        # Created by a normal user — like a real enqueue from a UI action.
+        parent = self.Task.with_user(creator).create_task(
+            'test.task.type.two.phase', name='Pipeline', params={'a_count': 1})
+        self.assertEqual(parent.create_uid, creator)
+
+        parent = parent.sudo()
+        parent.action_assign(self.worker)
+        parent.action_start()
+        task_type = TaskTypeRegistry().get_task_type(
+            'test.task.type.two.phase')()
+        # The worker runs execute() as the creating user.
+        task_type.execute(self.env(user=creator.id), parent)
+
+        wave_a = self._current_wave(parent)
+        self.assertEqual(wave_a.create_uid, creator)
+
+        self._complete(wave_a, 'done')
+        # Advance phases the way the worker does — from a SUPERUSER context.
+        parent.sudo()._check_waiting_parent()
+
+        wave_b = self._current_wave(parent)
+        self.assertTrue(wave_b)
+        self.assertEqual(wave_b.create_uid, creator)
+
     def test_cancel_root_cascades_across_waves(self):
         parent = self._start_pipeline(
             'test.task.type.two.phase', params={'a_count': 2})
@@ -140,6 +179,52 @@ class TestMultiPhaseLifecycle(_MultiPhaseBase):
         # live phase-b children cancelled; already-done phase-a untouched
         wave_b = self._current_wave(parent)
         self.assertEqual(set(wave_b.mapped('state')), {'cancelled'})
+
+
+class TestHeterogeneousWave(_MultiPhaseBase):
+    """A single phase may fan out children of more than one task type."""
+
+    def test_wave_spawns_mixed_types(self):
+        parent = self._start_pipeline('test.task.type.mixed.wave')
+        wave = self._current_wave(parent)
+        self.assertEqual(len(wave), 3)
+        self.assertEqual(
+            sorted(wave.mapped('type_code')),
+            ['test.task.type.echo', 'test.task.type.echo',
+             'test.task.type.noop'])
+
+    def test_per_child_field_overrides_applied(self):
+        parent = self._start_pipeline('test.task.type.mixed.wave')
+        wave = self._current_wave(parent)
+        notify = wave.filtered(
+            lambda c: c.type_code == 'test.task.type.noop')
+        chunks = wave.filtered(
+            lambda c: c.type_code == 'test.task.type.echo')
+        # dict spec overrode channel + priority for the notify child only
+        self.assertEqual(notify.channel, 'fast')
+        self.assertEqual(notify.priority, 1)
+        # tuple-form children inherit the parent's channel
+        self.assertEqual(set(chunks.mapped('channel')), {parent.channel})
+
+    def test_mixed_wave_naming_is_global(self):
+        parent = self._start_pipeline('test.task.type.mixed.wave')
+        wave = self._current_wave(parent)
+        # names are numbered [i/total] across the whole heterogeneous wave
+        self.assertEqual(
+            sorted(wave.mapped('name')),
+            ['%s [1/3]' % parent.name,
+             '%s [2/3]' % parent.name,
+             '%s [3/3]' % parent.name])
+
+    def test_mixed_wave_completes_and_prev_results_span_all_types(self):
+        parent = self._start_pipeline('test.task.type.mixed.wave')
+        self._complete(self._current_wave(parent), 'done')
+        parent._check_waiting_parent()
+
+        self.assertEqual(parent.state, 'done')
+        self.assertEqual(
+            parent.task_result,
+            {'types': ['test.task.type.echo', 'test.task.type.noop']})
 
 
 class TestMultiPhaseSkipAndEmpty(_MultiPhaseBase):

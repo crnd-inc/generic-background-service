@@ -307,8 +307,10 @@ class MultiPhaseTaskType(AbstractTaskType):
                                 [{'doc_ids': b}
                                  for b in batches(doc_ids)])
 
-        For pipelines that need heterogeneous child types within one wave, or
-        per-child reactive spawning, drop down to the raw primitive
+        A wave may be heterogeneous: return a list of per-child specs from
+        :meth:`plan_phase` (see there) to mix task types within one phase. For
+        per-child reactive spawning (spawn a dependent the moment one child
+        finishes, while siblings run), drop down to the raw primitive
         (``task.spawn_children(...)`` + ``action_wait_children()``) instead.
     """
 
@@ -329,10 +331,18 @@ class MultiPhaseTaskType(AbstractTaskType):
             :param str phase: the phase name (an entry of :attr:`_phases`)
             :param prev_results: list of :class:`ChildResult` for the wave
                 that just finished, or ``None`` for the first phase
-            :return: a ``(type_code, params_list)`` tuple — the task type for
-                this wave and the list of per-child ``task_params`` dicts.
-                Return ``None`` or an empty ``params_list`` to skip the phase
-                (no children; advance immediately to the next phase).
+            :return: the children to spawn for this phase, in one of:
+
+                - ``(type_code, params_list)`` — a *homogeneous* wave: one task
+                  type, one ``task_params`` dict per child.
+                - a *list* of per-child specs for a *heterogeneous* wave; each
+                  spec is either a ``(type_code, params)`` tuple or a dict
+                  ``{'type_code': …, 'params': …, **field_overrides}`` (the
+                  field overrides — e.g. ``channel``, ``priority`` — apply to
+                  that child only).
+
+                Return ``None`` or an empty list to skip the phase (no
+                children; advance immediately to the next phase).
         """
         raise NotImplementedError
 
@@ -384,10 +394,10 @@ class MultiPhaseTaskType(AbstractTaskType):
         """
         while phase_index < len(self._phases):
             phase = self._phases[phase_index]
-            type_code, params_list = self._normalize_plan(
+            specs = self._normalize_plan(
                 self.plan_phase(env, task, phase, prev_results))
-            if params_list:
-                children = task.spawn_children(type_code, params_list)
+            if specs:
+                children = task.spawn_children(specs=specs)
                 phase_data = dict(task.phase_data or {})
                 phase_data['child_ids'] = children.ids
                 task.write({
@@ -404,10 +414,28 @@ class MultiPhaseTaskType(AbstractTaskType):
 
     @staticmethod
     def _normalize_plan(plan):
+        """ Normalize a plan_phase() return value into a list of per-child
+            spec dicts (accepted by create_children's ``specs=``). Accepts:
+
+            - ``None`` / empty            → ``[]`` (skip the phase)
+            - ``(type_code, params_list)``→ homogeneous wave
+            - list of ``(type_code, params)`` tuples and/or spec dicts
+              → heterogeneous wave
+        """
         if not plan:
-            return None, []
-        type_code, params_list = plan
-        return type_code, list(params_list or [])
+            return []
+        if isinstance(plan, tuple):
+            type_code, params_list = plan
+            return [{'type_code': type_code, 'params': params}
+                    for params in (params_list or [])]
+        specs = []
+        for item in plan:
+            if isinstance(item, dict):
+                specs.append(item)
+            else:
+                type_code, params = item
+                specs.append({'type_code': type_code, 'params': params})
+        return specs
 
     def iter_wave_results(self, parent_task):
         """ Like :meth:`iter_child_results`, but limited to the children of
