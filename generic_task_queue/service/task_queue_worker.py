@@ -278,6 +278,17 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         self._active_tasks.append(task_info)
         thread.start()
 
+    @staticmethod
+    def _creator_env(env, task):
+        """ Return ``env`` scoped to ``task``'s creator (least-privilege).
+
+            execute() and the lifecycle hooks run as the user who created the
+            task; framework writes of protected fields sudo() internally.
+            ``create_uid`` is always set (a required magic field), so no
+            fallback is needed.
+        """
+        return env(user=task.create_uid.id)
+
     def _task_thread_target(self, task_id, runner_id=None):
         """ Runs in a separate thread. Executes one task. """
         # Phase 1: mark as running
@@ -306,7 +317,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 # protected fields (action_*, phase_data, …) sudo() internally
                 # so elevation is explicit and auditable. The worker keeps its
                 # own SUPERUSER-bound `task` for state transitions below.
-                user_env = env(user=task.create_uid.id)
+                user_env = self._creator_env(env, task)
                 user_task = task.with_env(user_env)
                 result = task_type.execute(user_env, user_task)
 
@@ -379,7 +390,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                     # Same savepoint guard as on_success: a DB error in the
                     # hook must not abort the transaction before action_fail.
                     # Run the hook as the creating user (see execute() above).
-                    user_env = env(user=task.create_uid.id)
+                    user_env = self._creator_env(env, task)
                     user_task = task.with_env(user_env)
                     try:
                         with env.cr.savepoint():
@@ -656,7 +667,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 # Run the hook as the parent's creator (see execute()): the
                 # task type's logic is least-privilege; framework writes
                 # sudo() internally.
-                user_env = env(user=parent.create_uid.id)
+                user_env = self._creator_env(env, parent)
                 task_type.on_child_done(
                     user_env,
                     parent.with_env(user_env),

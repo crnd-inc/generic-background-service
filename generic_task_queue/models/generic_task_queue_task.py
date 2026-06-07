@@ -593,8 +593,8 @@ class GenericTaskQueueTask(models.Model):
         # worker's SUPERUSER poll context). The task type's logic is thus
         # least-privilege; framework writes sudo() internally. `self` stays
         # SUPERUSER-bound for the re-arm check and action_done() below.
-        creator = self.create_uid
-        hook_env = self.env(user=creator.id) if creator else self.env
+        # create_uid is always set (required magic field) — no fallback.
+        hook_env = self.env(user=self.create_uid.id)
         hook_parent = self.with_env(hook_env)
         try:
             task_type_cls = registry.get_task_type(self.type_code)

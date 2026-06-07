@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from unittest.mock import patch
 
+from odoo import exceptions
 from odoo.tests.common import TransactionCase
 
 from odoo.addons.generic_task_queue.service.task_type_registry import (
@@ -481,3 +482,43 @@ class TestComposedServiceChannels(TransactionCase):
         params = cls.__new__(cls).get_worker_params()
         self.assertIn('default', params['channels'])
         self.assertIn('background_migration', params['channels'])
+
+
+class TestForceRescheduleAccess(TransactionCase):
+    """action_force_reschedule must enforce the system-admin restriction
+    itself, not rely only on the UI button's groups="base.group_system"."""
+
+    def setUp(self):
+        super().setUp()
+        self.Migration = self.env['generic.background.migration']
+        self.Migration._schedule_migration(
+            'acl_mod', '18.0.1.0.0', 'acl-mig')
+        self.rec = self.Migration.sudo().search([
+            ('module', '=', 'acl_mod'),
+            ('migration_name', '=', 'acl-mig'),
+        ], limit=1)
+        self.rec.write({'state': 'failed'})
+
+    def test_non_system_user_cannot_force_reschedule(self):
+        """A task-queue manager (read access, not system) is blocked."""
+        manager = self.env['res.users'].create({
+            'name': 'TQ Manager',
+            'login': 'tq_manager_acl',
+            'groups_id': [(6, 0, [
+                self.env.ref('base.group_user').id,
+                self.env.ref(
+                    'generic_task_queue.group_task_queue_manager').id,
+            ])],
+        })
+        self.assertFalse(manager.has_group('base.group_system'))
+        with self.assertRaises(exceptions.AccessError):
+            self.rec.with_user(manager).action_force_reschedule()
+        self.rec.invalidate_recordset(['state'])
+        self.assertEqual(self.rec.state, 'failed')   # unchanged
+
+    def test_system_user_can_force_reschedule(self):
+        admin = self.env.ref('base.user_admin')
+        self.assertTrue(admin.has_group('base.group_system'))
+        self.rec.with_user(admin).action_force_reschedule()
+        self.rec.invalidate_recordset(['state'])
+        self.assertEqual(self.rec.state, 'pending')

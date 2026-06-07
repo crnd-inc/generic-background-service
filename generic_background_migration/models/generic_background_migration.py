@@ -3,7 +3,7 @@ import logging
 import os
 import re
 
-from odoo import models, fields, api
+from odoo import models, fields, api, exceptions
 from odoo.modules import get_module_path
 
 _logger = logging.getLogger(__name__)
@@ -146,7 +146,18 @@ class GenericBackgroundMigration(models.Model):
             module, version, migration_name)
 
     def action_force_reschedule(self):
-        """Reset a failed migration to pending and re-enqueue its task."""
+        """Reset a failed migration to pending and re-enqueue its task.
+
+            Restricted to system administrators: this re-runs a data
+            migration, which may not be idempotent. The method enforces the
+            group itself (not just the UI button) so it cannot be invoked via
+            RPC by users who merely have read access to this model.
+        """
+        if not self.env.su and not self.env.user.has_group(
+                'base.group_system'):
+            raise exceptions.AccessError(self.env._(
+                "Only system administrators can force-reschedule a "
+                "background migration."))
         for rec in self.sudo():
             if rec.state != 'failed':
                 continue
