@@ -14,4 +14,5 @@ from . import (  # noqa: F401
     test_unique_key,
     test_routing,
     test_multi_phase,
+    test_task_spec,
 )

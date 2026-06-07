@@ -8,6 +8,7 @@ from odoo import models, fields, api, exceptions
 from odoo.addons.generic_mixin.tools.x2m_agg_utils import read_counts_for_o2m
 
 from ..exceptions import AlreadyScheduledException
+from ..tools.task_spec import TaskSpec
 
 _logger = logging.getLogger(__name__)
 
@@ -624,8 +625,7 @@ class GenericTaskQueueTask(models.Model):
         self.action_done(result)
 
     @api.private
-    def spawn_children(self, type_code=None, params_list=None, *,
-                       specs=None, **common_vals):
+    def spawn_children(self, type_code=None, params_list=None, **common_vals):
         """ Spawn a new wave of child tasks under this parent.
 
             Convenience wrapper over :meth:`create_children` for use from
@@ -643,7 +643,7 @@ class GenericTaskQueueTask(models.Model):
         """
         self.ensure_one()
         return self.env['generic.task.queue.task'].create_children(
-            self, type_code, params_list, specs=specs, **common_vals)
+            self, type_code, params_list, **common_vals)
 
     @api.private
     def store_phase_data(self, **vals):
@@ -667,48 +667,75 @@ class GenericTaskQueueTask(models.Model):
     @api.private
     @api.model
     def create_children(self, parent_task, type_code=None, params_list=None,
-                        *, specs=None, **common_vals):
+                        **common_vals):
         """ Create a wave of child tasks under a parent task.
 
-            Two mutually-exclusive calling forms:
+            Two calling forms:
 
-            - **Homogeneous** — pass ``type_code`` + ``params_list`` (a list of
-              task_params dicts). ``common_vals`` (e.g. ``channel``,
-              ``priority``) apply to every child.
-            - **Heterogeneous** — pass ``specs``, a list of per-child dicts,
-              each ``{'type_code': …, 'params': …, **field_overrides}``. Mixes
-              task types and per-child field overrides within one wave.
+            - **Homogeneous** — a single task type for the whole wave.
+              ``common_vals`` (``TaskSpec`` fields, e.g. ``channel`` /
+              ``priority``) apply to every child::
+
+                  env['generic.task.queue.task'].create_children(
+                      parent, 'my.upload.chunk',
+                      [{'ids': [1, 2]}, {'ids': [3, 4]}],
+                      channel='heavy', priority=1)
+
+            - **Heterogeneous** — pass an iterable of :class:`TaskSpec`
+              (e.g. a :class:`TaskListSpec`) as the second argument, to mix
+              task types / per-child overrides in one wave::
+
+                  from generic_task_queue import TaskSpec
+                  env['generic.task.queue.task'].create_children(parent, [
+                      TaskSpec('my.upload.chunk', {'ids': [1, 2]}),
+                      TaskSpec('my.upload.chunk', {'ids': [3, 4]}),
+                      TaskSpec('my.notify', {'message': 'uploading'},
+                               channel='fast', priority=0),
+                  ])
 
             Children are named ``"{parent.name} [i/total]"`` across the whole
-            wave and inherit the parent's channel unless overridden.
+            wave (unless a spec sets ``name``), inherit the parent's channel
+            unless overridden, and are always created with the parent's
+            ``create_uid`` so they execute as the user who started the work.
 
             :param parent_task: parent task record
+            :param type_code: task type name (homogeneous) **or** an iterable
+                of :class:`TaskSpec` (heterogeneous)
+            :param list params_list: per-child ``task_params`` dicts
+                (homogeneous form)
+            :param common_vals: per-child field overrides applied to every
+                child (homogeneous form); must be valid :class:`TaskSpec`
+                fields
             :return: recordset of created child tasks
         """
-        if specs is None:
+        if isinstance(type_code, str):
             specs = [
-                {'type_code': type_code, 'params': params, **common_vals}
+                TaskSpec(type_code, params, **common_vals)
                 for params in (params_list or [])
             ]
-        elif type_code is not None or params_list is not None or common_vals:
-            raise exceptions.ValidationError(self.env._(
-                "create_children(): pass either (type_code, params_list) "
-                "or specs, not both."))
+        else:
+            if params_list is not None or common_vals:
+                raise exceptions.ValidationError(self.env._(
+                    "create_children(): the heterogeneous form takes a list "
+                    "of TaskSpec and no params_list / field overrides."))
+            specs = list(type_code or [])
+            for spec in specs:
+                if not isinstance(spec, TaskSpec):
+                    raise exceptions.ValidationError(self.env._(
+                        "create_children(): expected TaskSpec instances, "
+                        "got %(type)s.", type=type(spec).__name__))
 
         total = len(specs)
         vals_list = []
         for i, spec in enumerate(specs):
-            spec = dict(spec)
-            child_type = spec.pop('type_code')
-            params = spec.pop('params', None)
             vals = {
                 'name': '%s [%d/%d]' % (parent_task.name, i + 1, total),
-                'type_code': child_type,
                 'parent_id': parent_task.id,
-                'task_params': params or {},
                 'channel': parent_task.channel,
             }
-            vals.update(spec)  # remaining keys = per-child field overrides
+            # spec.to_vals() carries type_code/task_params and any per-child
+            # override (name/channel/… overriding the defaults set above).
+            vals.update(spec.to_vals())
             vals_list.append(vals)
 
         # Children must belong to the task's creator — not to whoever's
@@ -721,9 +748,62 @@ class GenericTaskQueueTask(models.Model):
         # instead of as the user who started the pipeline.
         model = self
         creator = parent_task.create_uid
-        if creator and creator.id != self.env.uid:
+        if creator.id != self.env.uid:
             model = self.with_user(creator.id)
         return model.create(vals_list)
+
+    @api.model
+    def create_tasks(self, task_list):
+        """ Create several top-level tasks from an iterable of TaskSpec.
+
+            The batch counterpart of :meth:`create_task` for a heterogeneous
+            set of tasks, typically built (often conditionally) with a
+            :class:`TaskListSpec`. Each spec's ``channel`` / ``retry_policy`` /
+            ``max_retries`` fall back to its task type's defaults when left
+            unset; ``name`` defaults to the type code. Tasks belong to the
+            current user.
+
+            Unlike :meth:`create_task` this does not apply ``unique_key`` /
+            conflict handling — use ``create_task`` for idempotent enqueueing.
+
+            Example::
+
+                from generic_task_queue import TaskListSpec
+                batch = TaskListSpec(channel='heavy')
+                if needs_export:
+                    batch.add('my.export', {'ids': ids})
+                if needs_notify:
+                    batch.add('my.notify', {'to': uid}, channel='fast')
+                env['generic.task.queue.task'].create_tasks(batch)
+
+            :param task_list: iterable of :class:`TaskSpec`
+            :return: recordset of created tasks
+        """
+        from ..service.task_type_registry import TaskTypeRegistry
+        registry = TaskTypeRegistry()
+        vals_list = []
+        for spec in list(task_list or []):
+            if not isinstance(spec, TaskSpec):
+                raise exceptions.ValidationError(self.env._(
+                    "create_tasks(): expected TaskSpec instances, "
+                    "got %(type)s.", type=type(spec).__name__))
+            vals = spec.to_vals()
+            try:
+                cls = registry.get_task_type(spec.type_code)
+            except KeyError:
+                # Unknown type — leave defaults to the field defaults; create()
+                # raises the clear "Unknown task type" error below.
+                cls = None
+            if cls is not None:
+                vals.setdefault('channel', cls._default_channel)
+                vals.setdefault('retry_policy', cls._retry_policy)
+                vals.setdefault('max_retries', cls._max_retries)
+            vals.setdefault('name', spec.type_code)
+            if vals.get('retry_policy'):
+                vals['retry_policy'] = _normalize_retry_policy(
+                    vals['retry_policy'])
+            vals_list.append(vals)
+        return self.create(vals_list)
 
     @api.private
     def update_progress(self, value):

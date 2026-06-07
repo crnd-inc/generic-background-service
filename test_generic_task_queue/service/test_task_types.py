@@ -1,5 +1,5 @@
 from odoo.addons.generic_task_queue import (
-    AbstractTaskType, MultiPhaseTaskType)
+    AbstractTaskType, MultiPhaseTaskType, TaskListSpec)
 
 
 class TestTaskTypeNoOp(AbstractTaskType):
@@ -207,14 +207,14 @@ class TestTaskTypeMixedWave(MultiPhaseTaskType):
     _phases = ['work']
 
     def plan_phase(self, env, task, phase, prev_results):
-        return [
-            ('test.task.type.echo', {'kind': 'chunk', 'i': 0}),
-            ('test.task.type.echo', {'kind': 'chunk', 'i': 1}),
-            {'type_code': 'test.task.type.noop',
-             'params': {'kind': 'notify'},
-             'channel': 'fast',
-             'priority': 1},
-        ]
+        # Built via TaskListSpec to exercise the builder end-to-end.
+        return (
+            TaskListSpec()
+            .add('test.task.type.echo', {'kind': 'chunk', 'i': 0})
+            .add('test.task.type.echo', {'kind': 'chunk', 'i': 1})
+            .add('test.task.type.noop', {'kind': 'notify'},
+                 channel='fast', priority=1)
+        )
 
     def aggregate_result(self, env, task, last_results):
         # prev_results spans the whole heterogeneous wave, both types.

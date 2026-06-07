@@ -2,6 +2,7 @@ import abc
 import collections
 
 from .task_type_registry import TaskTypeRegistry
+from ..tools.task_spec import TaskSpec
 
 # Returned by iter_child_results() for each child task.
 # - result: task_result JSON (only set when state == 'done', else None)
@@ -307,10 +308,11 @@ class MultiPhaseTaskType(AbstractTaskType):
                                 [{'doc_ids': b}
                                  for b in batches(doc_ids)])
 
-        A wave may be heterogeneous: return a list of per-child specs from
-        :meth:`plan_phase` (see there) to mix task types within one phase. For
-        per-child reactive spawning (spawn a dependent the moment one child
-        finishes, while siblings run), drop down to the raw primitive
+        A wave may be heterogeneous: return an iterable of
+        :class:`~generic_task_queue.TaskSpec` (or a ``TaskListSpec``) from
+        :meth:`plan_phase` to mix task types within one phase. For per-child
+        reactive spawning (spawn a dependent the moment one child finishes,
+        while siblings run), drop down to the raw primitive
         (``task.spawn_children(...)`` + ``action_wait_children()``) instead.
     """
 
@@ -335,11 +337,10 @@ class MultiPhaseTaskType(AbstractTaskType):
 
                 - ``(type_code, params_list)`` — a *homogeneous* wave: one task
                   type, one ``task_params`` dict per child.
-                - a *list* of per-child specs for a *heterogeneous* wave; each
-                  spec is either a ``(type_code, params)`` tuple or a dict
-                  ``{'type_code': …, 'params': …, **field_overrides}`` (the
-                  field overrides — e.g. ``channel``, ``priority`` — apply to
-                  that child only).
+                - an iterable of :class:`~generic_task_queue.TaskSpec` (a list,
+                  or a :class:`~generic_task_queue.TaskListSpec` built with the
+                  ``.add()`` helpers) for a *heterogeneous* wave that mixes
+                  task types / per-child overrides.
 
                 Return ``None`` or an empty list to skip the phase (no
                 children; advance immediately to the next phase).
@@ -397,7 +398,7 @@ class MultiPhaseTaskType(AbstractTaskType):
             specs = self._normalize_plan(
                 self.plan_phase(env, task, phase, prev_results))
             if specs:
-                children = task.spawn_children(specs=specs)
+                children = task.spawn_children(specs)
                 phase_data = dict(task.phase_data or {})
                 phase_data['child_ids'] = children.ids
                 # phase / phase_data are protected fields — write via explicit
@@ -416,28 +417,21 @@ class MultiPhaseTaskType(AbstractTaskType):
 
     @staticmethod
     def _normalize_plan(plan):
-        """ Normalize a plan_phase() return value into a list of per-child
-            spec dicts (accepted by create_children's ``specs=``). Accepts:
+        """ Normalize a plan_phase() return value into a list of
+            :class:`TaskSpec`. Accepts:
 
             - ``None`` / empty            → ``[]`` (skip the phase)
             - ``(type_code, params_list)``→ homogeneous wave
-            - list of ``(type_code, params)`` tuples and/or spec dicts
-              → heterogeneous wave
+            - an iterable of :class:`TaskSpec` (a list or a
+              :class:`TaskListSpec`) → heterogeneous wave
         """
         if not plan:
             return []
         if isinstance(plan, tuple):
             type_code, params_list = plan
-            return [{'type_code': type_code, 'params': params}
+            return [TaskSpec(type_code, params)
                     for params in (params_list or [])]
-        specs = []
-        for item in plan:
-            if isinstance(item, dict):
-                specs.append(item)
-            else:
-                type_code, params = item
-                specs.append({'type_code': type_code, 'params': params})
-        return specs
+        return list(plan)
 
     def iter_wave_results(self, parent_task):
         """ Like :meth:`iter_child_results`, but limited to the children of
