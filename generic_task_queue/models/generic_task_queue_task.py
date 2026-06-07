@@ -8,7 +8,7 @@ from odoo import models, fields, api, exceptions
 from odoo.addons.generic_mixin.tools.x2m_agg_utils import read_counts_for_o2m
 
 from ..exceptions import AlreadyScheduledException
-from ..tools.task_spec import TaskSpec
+from ..tools.task_spec import TaskSpec, normalize_retry_policy
 
 _logger = logging.getLogger(__name__)
 
@@ -40,33 +40,6 @@ RETRY_POLICIES = [
     ('retry_known', 'Retry Known'),
     ('retry_any', 'Retry Any'),
 ]
-
-# Map old policy names (pre-0.1.0) to current names for backward compat.
-_RETRY_POLICY_ALIASES = {
-    'non_retriable': 'no_retry',
-    'retriable':     'retry_any',
-}
-
-
-def _normalize_retry_policy(value):
-    """Translate deprecated policy names; warn so callers know to update.
-
-    Extension modules not yet updated may still set
-    ``_retry_policy = 'retriable'`` or pass
-    ``retry_policy='non_retriable'`` to ``create_task()``.
-    Accept these values rather than crashing, but warn so developers
-    know to update their code.
-    """
-    canonical = _RETRY_POLICY_ALIASES.get(value)
-    if canonical is not None:
-        _logger.warning(
-            "Deprecated retry_policy value %r — use %r instead. "
-            "Old names will be removed in a future release.",
-            value, canonical,
-        )
-        return canonical
-    return value
-
 
 TERMINAL_STATES = frozenset({'done', 'failed', 'cancelled'})
 
@@ -625,7 +598,8 @@ class GenericTaskQueueTask(models.Model):
         self.action_done(result)
 
     @api.private
-    def spawn_children(self, type_code=None, params_list=None, **common_vals):
+    def spawn_children(self, *specs, type_code=None, params_list=None,
+                       **common_vals):
         """ Spawn a new wave of child tasks under this parent.
 
             Convenience wrapper over :meth:`create_children` for use from
@@ -636,14 +610,14 @@ class GenericTaskQueueTask(models.Model):
             ``on_all_children_done`` — which is what makes multi-phase
             pipelines possible (a parent can spawn more than one wave).
 
-            Accepts the same homogeneous / heterogeneous calling forms as
-            :meth:`create_children`.
+            Accepts the same calling forms as :meth:`create_children`.
 
             :return: recordset of created child tasks
         """
         self.ensure_one()
         return self.env['generic.task.queue.task'].create_children(
-            self, type_code, params_list, **common_vals)
+            self, *specs, type_code=type_code, params_list=params_list,
+            **common_vals)
 
     @api.private
     def store_phase_data(self, **vals):
@@ -666,32 +640,74 @@ class GenericTaskQueueTask(models.Model):
 
     @api.private
     @api.model
-    def create_children(self, parent_task, type_code=None, params_list=None,
-                        **common_vals):
+    def _collect_specs(self, specs, type_code, params_list, common_vals):
+        """ Resolve the spawn/create signature into a flat list of TaskSpec.
+
+            Two mutually-exclusive forms (see :meth:`create_children`):
+
+            - **Heterogeneous** — ``specs`` is the variadic positional tuple;
+              each item is a :class:`TaskSpec` or an iterable of them (a list,
+              a :class:`TaskListSpec`, a generator), all flattened.
+            - **Homogeneous shorthand** — no positional specs; ``type_code`` +
+              ``params_list`` build one wave with ``common_vals`` (TaskSpec
+              fields) applied to every task.
+        """
+        if specs:
+            if type_code is not None or params_list is not None \
+                    or common_vals:
+                raise exceptions.ValidationError(self.env._(
+                    "Pass task specs positionally OR the keyword "
+                    "type_code / params_list shorthand, not both."))
+            result = []
+            for item in specs:
+                if isinstance(item, TaskSpec):
+                    result.append(item)
+                elif isinstance(item, str) or not hasattr(item, '__iter__'):
+                    raise exceptions.ValidationError(self.env._(
+                        "Expected a TaskSpec or an iterable of TaskSpec, "
+                        "got %(type)s.", type=type(item).__name__))
+                else:
+                    for sub in item:
+                        if not isinstance(sub, TaskSpec):
+                            raise exceptions.ValidationError(self.env._(
+                                "Expected TaskSpec instances, got "
+                                "%(type)s.", type=type(sub).__name__))
+                        result.append(sub)
+            return result
+        return [
+            TaskSpec.build(type_code, params, **common_vals)
+            for params in (params_list or [])
+        ]
+
+    @api.private
+    @api.model
+    def create_children(self, parent_task, *specs, type_code=None,
+                        params_list=None, **common_vals):
         """ Create a wave of child tasks under a parent task.
 
             Two calling forms:
 
-            - **Homogeneous** — a single task type for the whole wave.
-              ``common_vals`` (``TaskSpec`` fields, e.g. ``channel`` /
-              ``priority``) apply to every child::
-
-                  env['generic.task.queue.task'].create_children(
-                      parent, 'my.upload.chunk',
-                      [{'ids': [1, 2]}, {'ids': [3, 4]}],
-                      channel='heavy', priority=1)
-
-            - **Heterogeneous** — pass an iterable of :class:`TaskSpec`
-              (e.g. a :class:`TaskListSpec`) as the second argument, to mix
-              task types / per-child overrides in one wave::
+            - **Heterogeneous** — pass :class:`TaskSpec` values (and/or
+              iterables of them, e.g. a :class:`TaskListSpec`) positionally;
+              they are flattened into one wave::
 
                   from generic_task_queue import TaskSpec
-                  env['generic.task.queue.task'].create_children(parent, [
+                  env['generic.task.queue.task'].create_children(
+                      parent,
                       TaskSpec('my.upload.chunk', {'ids': [1, 2]}),
-                      TaskSpec('my.upload.chunk', {'ids': [3, 4]}),
-                      TaskSpec('my.notify', {'message': 'uploading'},
-                               channel='fast', priority=0),
-                  ])
+                      TaskSpec('my.notify', {'msg': 'x'}, channel='fast'))
+
+                  # a built list or a TaskListSpec works as one arg too:
+                  env['generic.task.queue.task'].create_children(parent, batch)
+
+            - **Homogeneous shorthand** — a single task type via the
+              keyword-only ``type_code`` + ``params_list``; ``common_vals``
+              (TaskSpec fields) apply to every child::
+
+                  env['generic.task.queue.task'].create_children(
+                      parent, type_code='my.upload.chunk',
+                      params_list=[{'ids': [1, 2]}, {'ids': [3, 4]}],
+                      channel='heavy')
 
             Children are named ``"{parent.name} [i/total]"`` across the whole
             wave (unless a spec sets ``name``), inherit the parent's channel
@@ -699,35 +715,18 @@ class GenericTaskQueueTask(models.Model):
             ``create_uid`` so they execute as the user who started the work.
 
             :param parent_task: parent task record
-            :param type_code: task type name (homogeneous) **or** an iterable
-                of :class:`TaskSpec` (heterogeneous)
-            :param list params_list: per-child ``task_params`` dicts
-                (homogeneous form)
-            :param common_vals: per-child field overrides applied to every
-                child (homogeneous form); must be valid :class:`TaskSpec`
-                fields
+            :param specs: TaskSpec values / iterables of them (heterogeneous)
+            :param type_code: task type for the homogeneous shorthand
+            :param params_list: per-child task_params (homogeneous shorthand)
+            :param common_vals: per-child TaskSpec-field overrides applied to
+                every child (homogeneous shorthand)
             :return: recordset of created child tasks
         """
-        if isinstance(type_code, str):
-            specs = [
-                TaskSpec(type_code, params, **common_vals)
-                for params in (params_list or [])
-            ]
-        else:
-            if params_list is not None or common_vals:
-                raise exceptions.ValidationError(self.env._(
-                    "create_children(): the heterogeneous form takes a list "
-                    "of TaskSpec and no params_list / field overrides."))
-            specs = list(type_code or [])
-            for spec in specs:
-                if not isinstance(spec, TaskSpec):
-                    raise exceptions.ValidationError(self.env._(
-                        "create_children(): expected TaskSpec instances, "
-                        "got %(type)s.", type=type(spec).__name__))
-
-        total = len(specs)
+        task_specs = self._collect_specs(
+            specs, type_code, params_list, common_vals)
+        total = len(task_specs)
         vals_list = []
-        for i, spec in enumerate(specs):
+        for i, spec in enumerate(task_specs):
             vals = {
                 'name': '%s [%d/%d]' % (parent_task.name, i + 1, total),
                 'parent_id': parent_task.id,
@@ -753,18 +752,22 @@ class GenericTaskQueueTask(models.Model):
         return model.create(vals_list)
 
     @api.model
-    def create_tasks(self, task_list):
-        """ Create several top-level tasks from an iterable of TaskSpec.
+    def create_tasks(self, *specs, type_code=None, params_list=None,
+                     **common_vals):
+        """ Create several top-level tasks (batch counterpart of
+            :meth:`create_task`).
 
-            The batch counterpart of :meth:`create_task` for a heterogeneous
-            set of tasks, typically built (often conditionally) with a
-            :class:`TaskListSpec`. Each spec's ``channel`` / ``retry_policy`` /
-            ``max_retries`` fall back to its task type's defaults when left
-            unset; ``name`` defaults to the type code. Tasks belong to the
-            current user.
+            Accepts the same forms as :meth:`create_children`: pass
+            :class:`TaskSpec` values / iterables of them (e.g. a
+            :class:`TaskListSpec`) positionally, or use the keyword-only
+            ``type_code`` + ``params_list`` homogeneous shorthand. Each spec's
+            ``channel`` / ``retry_policy`` / ``max_retries`` fall back to its
+            task type's defaults when unset; ``name`` defaults to the type
+            code. Tasks belong to the current user.
 
-            Unlike :meth:`create_task` this does not apply ``unique_key`` /
-            conflict handling — use ``create_task`` for idempotent enqueueing.
+            Unlike :meth:`create_task` this does **not** apply ``unique_key`` /
+            conflict handling — use ``create_task`` for idempotent enqueueing,
+            or a loop of ``create_task`` for a deduplicated batch.
 
             Example::
 
@@ -776,17 +779,13 @@ class GenericTaskQueueTask(models.Model):
                     batch.add('my.notify', {'to': uid}, channel='fast')
                 env['generic.task.queue.task'].create_tasks(batch)
 
-            :param task_list: iterable of :class:`TaskSpec`
             :return: recordset of created tasks
         """
         from ..service.task_type_registry import TaskTypeRegistry
         registry = TaskTypeRegistry()
         vals_list = []
-        for spec in list(task_list or []):
-            if not isinstance(spec, TaskSpec):
-                raise exceptions.ValidationError(self.env._(
-                    "create_tasks(): expected TaskSpec instances, "
-                    "got %(type)s.", type=type(spec).__name__))
+        for spec in self._collect_specs(
+                specs, type_code, params_list, common_vals):
             vals = spec.to_vals()
             try:
                 cls = registry.get_task_type(spec.type_code)
@@ -799,8 +798,11 @@ class GenericTaskQueueTask(models.Model):
                 vals.setdefault('retry_policy', cls._retry_policy)
                 vals.setdefault('max_retries', cls._max_retries)
             vals.setdefault('name', spec.type_code)
+            # spec-provided retry_policy is already normalized by to_vals();
+            # normalize again here in case the *type default* is a deprecated
+            # alias (parity with create_task()).
             if vals.get('retry_policy'):
-                vals['retry_policy'] = _normalize_retry_policy(
+                vals['retry_policy'] = normalize_retry_policy(
                     vals['retry_policy'])
             vals_list.append(vals)
         return self.create(vals_list)
@@ -1084,7 +1086,7 @@ class GenericTaskQueueTask(models.Model):
                     max_retries = 0
                 if channel is None:
                     channel = 'default'
-        retry_policy = _normalize_retry_policy(retry_policy)
+        retry_policy = normalize_retry_policy(retry_policy)
         if name is None:
             name = type_code
         vals = {

@@ -12,7 +12,34 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from dataclasses import dataclass
+from datetime import datetime
+
+_logger = logging.getLogger(__name__)
+
+# Deprecated retry_policy aliases → canonical names. Single source of truth,
+# shared by TaskSpec.to_vals() and the task model's create_task().
+_RETRY_POLICY_ALIASES = {
+    'non_retriable': 'no_retry',
+    'retriable':     'retry_any',
+}
+
+
+def normalize_retry_policy(value):
+    """ Translate a deprecated retry_policy alias to its canonical name.
+
+        Warns so callers know to update; returns the value unchanged when it
+        is not a known alias.
+    """
+    canonical = _RETRY_POLICY_ALIASES.get(value)
+    if canonical is not None:
+        _logger.warning(
+            "Deprecated retry_policy value %r — use %r instead. "
+            "Old names will be removed in a future release.",
+            value, canonical)
+        return canonical
+    return value
 
 
 @dataclass(frozen=True)
@@ -36,7 +63,7 @@ class TaskSpec:
     name: str | None = None
     channel: str | None = None
     priority: int | None = None
-    eta: object | None = None       # datetime
+    eta: datetime | None = None
     timeout: int | None = None
     retry_policy: str | None = None
     max_retries: int | None = None
@@ -47,6 +74,24 @@ class TaskSpec:
         'name', 'channel', 'priority', 'eta', 'timeout',
         'retry_policy', 'max_retries',
     )
+
+    @classmethod
+    def build(cls, type_code, params=None, **overrides):
+        """ Construct a TaskSpec, validating override field names.
+
+            Same as ``TaskSpec(type_code, params, **overrides)`` but raises a
+            clear error naming the offending key(s) and the valid overrides,
+            instead of a raw ``TypeError`` from the dataclass constructor.
+            Used wherever overrides come from caller-supplied keyword args
+            (``TaskListSpec.add`` / ``create_children`` common_vals).
+        """
+        unknown = set(overrides) - set(cls._OVERRIDE_FIELDS)
+        if unknown:
+            raise ValueError(
+                "Unknown TaskSpec field(s): %s. Valid overrides: %s." % (
+                    ', '.join(sorted(unknown)),
+                    ', '.join(cls._OVERRIDE_FIELDS)))
+        return cls(type_code, params, **overrides)
 
     def __post_init__(self):
         if not isinstance(self.type_code, str) or not self.type_code:
@@ -73,6 +118,8 @@ class TaskSpec:
             value = getattr(self, field)
             if value is not None:
                 vals[field] = value
+        if 'retry_policy' in vals:
+            vals['retry_policy'] = normalize_retry_policy(vals['retry_policy'])
         return vals
 
     def replace(self, **changes) -> 'TaskSpec':
@@ -105,7 +152,7 @@ class TaskListSpec:
     def add(self, type_code, params=None, **overrides) -> 'TaskListSpec':
         """ Append a task; ``overrides`` win over the batch defaults. """
         merged = {**self._defaults, **overrides}
-        self._specs.append(TaskSpec(type_code, params, **merged))
+        self._specs.append(TaskSpec.build(type_code, params, **merged))
         return self
 
     def add_spec(self, spec: TaskSpec) -> 'TaskListSpec':

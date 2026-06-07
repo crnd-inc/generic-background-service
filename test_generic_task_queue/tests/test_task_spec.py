@@ -51,9 +51,21 @@ class TestTaskSpec(TransactionCase):
         with self.assertRaises(ValueError):
             TaskSpec('my.type', [1, 2])
 
-    def test_unknown_field_rejected(self):
+    def test_unknown_field_rejected_direct(self):
+        # direct constructor → dataclass TypeError naming the field
         with self.assertRaises(TypeError):
-            TaskSpec('my.type', {}, state='done')   # not a whitelisted field
+            TaskSpec('my.type', {}, state='done')
+
+    def test_build_friendly_error_on_unknown_field(self):
+        # TaskSpec.build() → clear ValueError listing the valid overrides
+        with self.assertRaises(ValueError) as cm:
+            TaskSpec.build('my.type', {}, state='done')
+        self.assertIn('state', str(cm.exception))
+        self.assertIn('channel', str(cm.exception))   # lists valid fields
+
+    def test_build_accepts_valid_overrides(self):
+        spec = TaskSpec.build('my.type', {'a': 1}, channel='fast')
+        self.assertEqual(spec.channel, 'fast')
 
 
 class TestTaskListSpec(TransactionCase):
@@ -97,6 +109,10 @@ class TestTaskListSpec(TransactionCase):
     def test_add_spec_type_checked(self):
         with self.assertRaises(TypeError):
             TaskListSpec().add_spec(('a', {}))   # not a TaskSpec
+
+    def test_add_unknown_field_friendly_error(self):
+        with self.assertRaises(ValueError):
+            TaskListSpec().add('a', {}, nope=1)
 
 
 class TestCreateChildrenSpecs(TransactionCase):
@@ -149,12 +165,55 @@ class TestCreateChildrenSpecs(TransactionCase):
                 [TaskSpec('test.task.type.noop', {})],
                 channel='x')
 
-    def test_homogeneous_form_unchanged(self):
+    def test_homogeneous_keyword_shorthand(self):
         children = self.Task.create_children(
-            self.parent, 'test.task.type.echo',
-            [{'a': 1}, {'b': 2}], priority=3)
+            self.parent, type_code='test.task.type.echo',
+            params_list=[{'a': 1}, {'b': 2}], priority=3)
         self.assertEqual(len(children), 2)
         self.assertEqual(set(children.mapped('priority')), {3})
+
+    def test_variadic_individual_specs(self):
+        children = self.Task.create_children(
+            self.parent,
+            TaskSpec('test.task.type.echo', {'a': 1}),
+            TaskSpec('test.task.type.noop', {'b': 2}))
+        self.assertEqual(len(children), 2)
+
+    def test_variadic_single_spec(self):
+        # A lone TaskSpec is a valid call (no list wrapper needed).
+        children = self.Task.create_children(
+            self.parent, TaskSpec('test.task.type.echo', {'a': 1}))
+        self.assertEqual(len(children), 1)
+
+    def test_variadic_mixes_specs_and_builder(self):
+        batch = TaskListSpec().add_many(
+            'test.task.type.echo', [{'i': 0}, {'i': 1}])
+        children = self.Task.create_children(
+            self.parent,
+            TaskSpec('test.task.type.noop', {'first': True}),
+            batch,
+            TaskSpec('test.task.type.noop', {'last': True}))
+        self.assertEqual(len(children), 4)
+        self.assertEqual(
+            children.mapped('type_code'),
+            ['test.task.type.noop', 'test.task.type.echo',
+             'test.task.type.echo', 'test.task.type.noop'])
+
+    def test_rejects_non_iterable_arg(self):
+        with self.assertRaises(exceptions.ValidationError):
+            self.Task.create_children(self.parent, 123)
+
+    def test_rejects_bare_string_arg(self):
+        # a str is iterable but clearly not a spec → friendly error,
+        # not "iterate the characters"
+        with self.assertRaises(exceptions.ValidationError):
+            self.Task.create_children(self.parent, 'test.task.type.noop')
+
+    def test_homogeneous_unknown_common_val(self):
+        with self.assertRaises(ValueError):
+            self.Task.create_children(
+                self.parent, type_code='test.task.type.noop',
+                params_list=[{}], nope=1)
 
 
 class TestCreateTasks(TransactionCase):

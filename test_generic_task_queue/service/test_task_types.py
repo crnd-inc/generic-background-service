@@ -44,9 +44,9 @@ class TestTaskTypeBatchParent(AbstractTaskType):
             items[i:i + self._chunk_size]
             for i in range(0, len(items), self._chunk_size)
         ]
-        Task.create_children(task, 'test.task.type.batch.child', [
-            {'items': chunk} for chunk in chunks
-        ])
+        Task.create_children(
+            task, type_code='test.task.type.batch.child',
+            params_list=[{'items': chunk} for chunk in chunks])
 
         # Transition to waiting
         task.action_wait_children()
@@ -253,13 +253,15 @@ class TestTaskTypeReArm(AbstractTaskType):
     _singleton = False
 
     def execute(self, env, task):
-        task.spawn_children('test.task.type.noop', [{'wave': 1}])
+        task.spawn_children(
+            type_code='test.task.type.noop', params_list=[{'wave': 1}])
         task.action_wait_children()
 
     def on_all_children_done(self, env, parent_task):
         # First invocation (only wave 1 exists) → spawn wave 2 and re-arm.
         # Second invocation (both waves exist) → finalize.
         if len(parent_task.child_ids) < 2:
-            parent_task.spawn_children('test.task.type.noop', [{'wave': 2}])
+            parent_task.spawn_children(
+                type_code='test.task.type.noop', params_list=[{'wave': 2}])
             return None
         return {'finished': True}

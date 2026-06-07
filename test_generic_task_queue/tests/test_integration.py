@@ -4,8 +4,10 @@ from odoo.addons.generic_task_queue.service.task_type_registry import (
     TaskTypeRegistry,
 )
 
+# normalize_retry_policy lives in tools.task_spec (shared by the model and
+# TaskSpec.to_vals), so the deprecation warning is logged from there.
 _COMPAT_LOGGER = (
-    'odoo.addons.generic_task_queue.models.generic_task_queue_task'
+    'odoo.addons.generic_task_queue.tools.task_spec'
 )
 
 

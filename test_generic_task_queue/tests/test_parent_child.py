@@ -79,8 +79,8 @@ class TestCreateChildren(TransactionCase):
             'test.task.type.noop', name='Parent')
 
         children = self.Task.create_children(
-            parent, 'test.task.type.noop',
-            [{'key': 'val1'}, {'key': 'val2'}, {'key': 'val3'}],
+            parent, type_code='test.task.type.noop',
+            params_list=[{'key': 'val1'}, {'key': 'val2'}, {'key': 'val3'}],
         )
         self.assertEqual(len(children), 3)
         for child in children:
@@ -96,8 +96,8 @@ class TestCreateChildren(TransactionCase):
             channel='heavy')
 
         children = self.Task.create_children(
-            parent, 'test.task.type.noop',
-            [{'data': 1}],
+            parent, type_code='test.task.type.noop',
+            params_list=[{'data': 1}],
         )
         self.assertEqual(children[0].channel, 'heavy')
 
@@ -107,8 +107,8 @@ class TestCreateChildren(TransactionCase):
             'test.task.type.noop', name='Parent')
 
         children = self.Task.create_children(
-            parent, 'test.task.type.noop',
-            [{'data': 1}, {'data': 2}],
+            parent, type_code='test.task.type.noop',
+            params_list=[{'data': 1}, {'data': 2}],
             priority=1,
             channel='custom',
         )
@@ -122,8 +122,8 @@ class TestCreateChildren(TransactionCase):
             'test.task.type.noop', name='My Batch')
 
         children = self.Task.create_children(
-            parent, 'test.task.type.noop',
-            [{'a': 1}, {'b': 2}],
+            parent, type_code='test.task.type.noop',
+            params_list=[{'a': 1}, {'b': 2}],
         )
         self.assertIn('My Batch', children[0].name)
 
@@ -149,8 +149,8 @@ class TestParentWaitsForChildren(TransactionCase):
         parent.sudo().action_start()
 
         children = self.Task.create_children(
-            parent, 'test.task.type.noop',
-            [{'idx': i} for i in range(n_children)],
+            parent, type_code='test.task.type.noop',
+            params_list=[{'idx': i} for i in range(n_children)],
         )
         parent.sudo().action_wait_children()
         return parent, children
@@ -320,8 +320,8 @@ class TestTrackProgress(TransactionCase):
         parent.sudo().action_assign(self.worker)
         parent.sudo().action_start()
         children = self.Task.create_children(
-            parent, 'test.task.type.noop',
-            [{'idx': i} for i in range(n_children)],
+            parent, type_code='test.task.type.noop',
+            params_list=[{'idx': i} for i in range(n_children)],
         )
         parent.sudo().action_wait_children()
         return parent, children
@@ -409,8 +409,8 @@ class TestIterChildResults(TransactionCase):
         parent.sudo().action_assign(self.worker)
         parent.sudo().action_start()
         children = self.Task.create_children(
-            parent, 'test.task.type.noop',
-            [{'idx': i} for i in range(len(states_and_results))],
+            parent, type_code='test.task.type.noop',
+            params_list=[{'idx': i} for i in range(len(states_and_results))],
         )
         parent.sudo().action_wait_children()
 
@@ -493,7 +493,7 @@ class TestPropagateProgress(TransactionCase):
         parent = self.Task.create_task(
             'test.task.type.noop', name='Root')
         child = self.Task.create_children(
-            parent, child_type_code, [{}])[0]
+            parent, type_code=child_type_code, params_list=[{}])[0]
         return parent, child
 
     def test_propagate_progress_default_false(self):
