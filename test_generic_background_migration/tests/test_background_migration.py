@@ -29,19 +29,19 @@ class TestTaskTypeAttributes(TransactionCase):
             'task.type.background.migration')
         self.assertFalse(cls._singleton)
 
-    def test_default_channel_is_background_migration(self):
+    def test_default_channel_is_default(self):
         cls = TaskTypeRegistry().get_task_type(
             'task.type.background.migration')
-        self.assertEqual(cls._default_channel, 'background_migration')
+        self.assertEqual(cls._default_channel, 'default')
 
-    def test_task_created_on_background_migration_channel(self):
-        """create_task() picks up _default_channel automatically."""
+    def test_task_created_on_default_channel(self):
+        """create_task() picks up the 'default' channel automatically."""
         task = self.env['generic.task.queue.task'].create_task(
             'task.type.background.migration',
             params={'module': 'base', 'version': '18.0.1.0.0',
                     'name': 'test'},
         )
-        self.assertEqual(task.channel, 'background_migration')
+        self.assertEqual(task.channel, 'default')
 
 
 class TestParamValidation(TransactionCase):
@@ -417,71 +417,41 @@ class TestMigrationHooks(TransactionCase):
 
 
 # ---------------------------------------------------------------------------
-# BackgroundServiceRegistry composition
+# Channel routing
 # ---------------------------------------------------------------------------
 
-class TestComposedServiceChannels(TransactionCase):
-    """BackgroundServiceRegistry must compose generic.task.queue.service
-    so that the generic_background_migration extension has higher MRO
-    priority than the base TaskQueueService, and _get_channels() returns
-    both 'default' and 'background_migration'.
-    """
+class TestMigrationChannel(TransactionCase):
+    """Migration tasks run on the 'default' channel, so the stock default
+    worker handles them with no service override."""
 
-    _SERVICE_NAME = 'generic.task.queue.service'
+    def test_migration_task_type_uses_default_channel(self):
+        from odoo.addons.generic_task_queue.service.task_type_registry import (
+            TaskTypeRegistry,
+        )
+        cls = TaskTypeRegistry().get_task_type(
+            'task.type.background.migration')
+        self.assertEqual(cls._default_channel, 'default')
 
-    @classmethod
-    def _get_composed_cls(cls):
+    def test_enqueued_migration_lands_on_default_channel(self):
+        Migration = self.env['generic.background.migration']
+        Migration._schedule_migration('chan_mod', '18.0.1.0.0', 'chan-mig')
+        rec = Migration.sudo().search([
+            ('module', '=', 'chan_mod'),
+            ('migration_name', '=', 'chan-mig'),
+        ], limit=1)
+        self.assertEqual(rec.task_id.channel, 'default')
+
+    def test_default_service_does_not_subscribe_background_migration(self):
+        """The default service no longer carries a 'background_migration'
+        channel (the service override was removed)."""
         from odoo.addons.generic_background_service.service.background_service_registry import (  # noqa: E501
             BackgroundServiceRegistry,
         )
-        # Trigger initialize() if this is the first call in this process.
-        # The singleton guard makes repeated calls safe.
         BackgroundServiceRegistry()
-        return BackgroundServiceRegistry.get_service_class(cls._SERVICE_NAME)
-
-    def test_service_present_in_registry(self):
-        """Composed service is present in the initialized registry."""
-        self.assertIsNotNone(self._get_composed_cls())
-
-    def test_get_channels_contains_default_and_background_migration(self):
-        """_get_channels() on the composed service includes both channels."""
-        cls = self._get_composed_cls()
+        cls = BackgroundServiceRegistry.get_service_class(
+            'generic.task.queue.service')
         channels = cls.__new__(cls)._get_channels()
-        self.assertIn('default', channels)
-        self.assertIn('background_migration', channels)
-
-    def test_get_channels_order(self):
-        """default precedes background_migration in the channel list."""
-        cls = self._get_composed_cls()
-        channels = cls.__new__(cls)._get_channels()
-        self.assertEqual(channels, ['default', 'background_migration'])
-
-    def test_migration_extension_precedes_base_in_mro(self):
-        """Last-registered class (extension) has higher MRO priority than
-        the base, so its _get_channels() override is reached first and
-        super() correctly delegates to the base."""
-        from odoo.addons.generic_task_queue.service.task_queue_service import (
-            TaskQueueService as Base,
-        )
-        from odoo.addons.generic_background_migration.service.task_queue_service import (  # noqa: E501
-            TaskQueueService as Extension,
-        )
-        composed = self._get_composed_cls()
-        mro = composed.__mro__
-        self.assertIn(Base, mro)
-        self.assertIn(Extension, mro)
-        self.assertLess(
-            mro.index(Extension), mro.index(Base),
-            "Extension must appear before Base in MRO "
-            "(last-registered = highest priority)",
-        )
-
-    def test_get_worker_params_channels(self):
-        """get_worker_params()['channels'] reflects the composed channels."""
-        cls = self._get_composed_cls()
-        params = cls.__new__(cls).get_worker_params()
-        self.assertIn('default', params['channels'])
-        self.assertIn('background_migration', params['channels'])
+        self.assertNotIn('background_migration', channels)
 
 
 class TestForceRescheduleAccess(TransactionCase):

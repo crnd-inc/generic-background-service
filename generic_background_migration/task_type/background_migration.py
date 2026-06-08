@@ -32,7 +32,10 @@ class BackgroundMigrationTaskType(AbstractTaskType):
     _singleton = False
     _retry_policy = 'retry_known'
     _track_progress = True
-    _default_channel = 'background_migration'
+    # Runs on the 'default' channel (inherited) so the stock default worker
+    # handles migrations out of the box — no service override needed. To
+    # isolate migrations on a dedicated worker, route them to a named channel
+    # and run a TaskQueueService subclass that subscribes to it.
 
     def execute(self, env, task):
         params = task.task_params
