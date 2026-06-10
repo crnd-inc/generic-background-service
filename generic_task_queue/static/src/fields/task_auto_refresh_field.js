@@ -44,7 +44,13 @@ function scheduleReload(record) {
  *   show_progress (bool, default true)  — show spinner + progress bar while active.
  *   label         (string, optional)    — label above the progress block. Defaults
  *                                         to the task display name (from M2O data).
- *                                         Pass "" to suppress.
+ *                                         Pass "" to suppress. NOTE: a literal here
+ *                                         is NOT translatable — prefer label_field.
+ *   label_field    (string, optional)   — field name on this record holding the
+ *                                         label text. Use this for a translatable
+ *                                         label (the field value is computed
+ *                                         server-side via env._()). Takes effect
+ *                                         only when the `label` option is not set.
  *   state_field    (string, optional)   — field name on this record holding the
  *                                         task's current state. Used for cold-start:
  *                                         shows the spinner immediately on open if
@@ -60,6 +66,7 @@ export class TaskAutoRefreshField extends Component {
         ...standardFieldProps,
         showProgress: { type: Boolean, optional: true },
         label: { type: String, optional: true },
+        labelField: { type: String, optional: true },
         stateField: { type: String, optional: true },
         progressField: { type: String, optional: true },
     };
@@ -177,12 +184,19 @@ export class TaskAutoRefreshField extends Component {
     /**
      * Label above the progress block.
      *
-     * Explicit label option takes precedence (empty string suppresses it).
-     * Falls back to the task display name from M2O data.
+     * Explicit label option takes precedence (empty string suppresses it),
+     * then label_field (read from this record — use for a translatable label),
+     * then the task display name from M2O data.
      */
     get displayLabel() {
         if (this.props.label !== undefined) {
             return this.props.label;
+        }
+        if (this.props.labelField) {
+            const fieldValue = this.props.record.data[this.props.labelField];
+            if (fieldValue) {
+                return fieldValue;
+            }
         }
         const value = this.props.record.data[this.props.name];
         return Array.isArray(value) ? value[1] : null;
@@ -196,6 +210,7 @@ export const taskAutoRefreshField = {
         return {
             showProgress: options.show_progress !== false,
             label: options.label,
+            labelField: options.label_field || null,
             stateField: options.state_field || null,
             progressField: options.progress_field || null,
         };
