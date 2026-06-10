@@ -1,0 +1,852 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* generic_task_queue
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 18.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-10 08:03+0000\n"
+"PO-Revision-Date: 2026-06-10 08:03+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: \n"
+"Plural-Forms: \n"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.res_config_settings_view_form
+msgid "<span>days (0 = disabled)</span>"
+msgstr "<span>днів (0 = вимкнено)</span>"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__active
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_worker__state__active
+msgid "Active"
+msgstr "Активно"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Are you sure you want to cancel this task?"
+msgstr "Ви впевнені, що хочете скасувати це завдання?"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__state__assigned
+msgid "Assigned"
+msgstr "Призначено"
+
+#. module: generic_task_queue
+#: model:ir.model,name:generic_task_queue.model_base
+msgid "Base"
+msgstr "База"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Cancel"
+msgstr "Скасувати"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__state__cancelled
+msgid "Cancelled"
+msgstr "Скасовано"
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid ""
+"Cannot transition task '%(name)s' from '%(old_state)s' to '%(new_state)s'."
+msgstr ""
+"Неможливо перевести завдання '%(name)s' зі стану '%(old_state)s' у '%"
+"(new_state)s'."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__channel
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Channel"
+msgstr "Канал"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__channels
+msgid "Channels"
+msgstr "Канали"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.res_config_settings_view_form
+msgid "Cleanup"
+msgstr "Очищення"
+
+#. module: generic_task_queue
+#. odoo-javascript
+#: code:addons/generic_task_queue/static/src/fields/task_auto_refresh_field.xml:0
+#: code:addons/generic_task_queue/static/src/widgets/task_progress_widget.xml:0
+msgid "Click to refresh"
+msgstr "Натисніть, щоб оновити"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__type_code
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__code
+msgid "Code"
+msgstr "Код"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_worker__channels
+msgid "Comma-separated list of channels this worker handles."
+msgstr "Список каналів, які обробляє цей виконавець, розділених комами."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_worker__task_types
+msgid "Comma-separated list of task type codes this worker handles."
+msgstr ""
+"Список кодів типів завдань, які обробляє цей виконавець, розділених комами."
+
+#. module: generic_task_queue
+#: model:ir.model,name:generic_task_queue.model_res_config_settings
+msgid "Config Settings"
+msgstr "Налаштування"
+
+#. module: generic_task_queue
+#: model:ir.ui.menu,name:generic_task_queue.menu_task_queue_configuration
+msgid "Configuration"
+msgstr "Налаштування"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__create_uid
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__create_uid
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__create_uid
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Created by"
+msgstr "Створив"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__create_date
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__create_date
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__create_date
+msgid "Created on"
+msgstr "Дата створення"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__date_completed
+msgid "Date Completed"
+msgstr "Дата завершення"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__date_created
+msgid "Date Created"
+msgstr "Дата створення"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__date_registered
+msgid "Date Registered"
+msgstr "Дата реєстрації"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__date_started
+msgid "Date Started"
+msgstr "Дата початку"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Dates"
+msgstr "Дати"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__dbname
+msgid "Dbname"
+msgstr "Назва бази даних"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_worker__state__dead
+msgid "Dead"
+msgstr "Мертвий"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__default_channel
+msgid "Default Channel"
+msgstr "Канал за замовчуванням"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__default_max_retries
+msgid "Default Max Retries"
+msgstr "Макс. повторів за замовчуванням"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__default_retry_policy
+msgid "Default Retry Policy"
+msgstr "Політика повторів за замовчуванням"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__default_timeout
+msgid "Default Timeout"
+msgstr "Час очікування за замовчуванням"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task_type__default_channel
+msgid ""
+"Default channel used when enqueueing tasks of this type without an explicit "
+"channel argument."
+msgstr ""
+"Канал за замовчуванням, що використовується при постановці в чергу завдань "
+"цього типу без явного вказання каналу."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task_type__default_timeout
+msgid ""
+"Default execution timeout in seconds for tasks of this type. 0 means no "
+"timeout. Can be overridden by the task-level timeout field."
+msgstr ""
+"Час очікування виконання за замовчуванням у секундах для завдань цього типу. "
+"0 означає без обмеження. Може бути перевизначений полем часу очікування на "
+"рівні завдання."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task_type__default_max_retries
+msgid ""
+"Default maximum automatic retries defined in code by the task type. Override "
+"per-task at enqueue time via create_task()."
+msgstr ""
+"Максимальна кількість автоматичних повторів за замовчуванням, визначена в "
+"коді типом завдання. Перевизначається для кожного завдання під час "
+"постановки в чергу через create_task()."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task_type__default_retry_policy
+msgid ""
+"Default retry policy defined in code by the task type. Override per-task at "
+"enqueue time via create_task()."
+msgstr ""
+"Політика повторів за замовчуванням, визначена в коді типом завдання. "
+"Перевизначається для кожного завдання під час постановки в чергу через "
+"create_task()."
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_type_form
+msgid "Defaults (defined in code)"
+msgstr "Значення за замовчуванням (визначені в коді)"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__description
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_type_form
+msgid "Description"
+msgstr "Опис"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__display_name
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__display_name
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__display_name
+msgid "Display Name"
+msgstr "Назва для відображення"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__state__done
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Done"
+msgstr "Виконано"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__type_code
+msgid "Dotted name of the task type (e.g. 'task.type.model.method')"
+msgstr "Назва типу завдання через крапку (напр. 'task.type.model.method')"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__eta
+msgid "ETA"
+msgstr "ETA"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__eta
+msgid ""
+"Earliest time this task should be executed. Leave empty for immediate "
+"execution."
+msgstr ""
+"Найраніший час, коли це завдання має бути виконане. Залиште порожнім для "
+"негайного виконання."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__task_error
+msgid "Error traceback if the task failed."
+msgstr "Трасування помилки, якщо завдання завершилося невдало."
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Execution"
+msgstr "Виконання"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__progress
+msgid "Execution progress (0-100)."
+msgstr "Прогрес виконання (0-100)."
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid "Expected TaskSpec instances, got %(type)s."
+msgstr "Очікувалися екземпляри TaskSpec, отримано %(type)s."
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid "Expected a TaskSpec or an iterable of TaskSpec, got %(type)s."
+msgstr "Очікувався TaskSpec або ітерований набір TaskSpec, отримано %(type)s."
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__state__failed
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Failed"
+msgstr "Помилка"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__phase_data
+msgid ""
+"For multi-phase pipeline tasks (MultiPhaseTaskType): JSON blob holding per-"
+"pipeline phase state. The framework stores the current wave's child ids "
+"under the reserved 'child_ids' key (used to isolate per-wave results across "
+"phases); task types may persist additional state via store_phase_data()."
+msgstr ""
+"Для багатофазних конвеєрних завдань (MultiPhaseTaskType): JSON-блоб, що "
+"зберігає стан кожної фази конвеєра. Фреймворк зберігає ID дочірніх завдань "
+"поточної хвилі під зарезервованим ключем 'child_ids' (використовується для "
+"ізоляції результатів кожної хвилі між фазами); типи завдань можуть зберігати "
+"додатковий стан через store_phase_data()."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__phase
+msgid ""
+"For multi-phase pipeline tasks (MultiPhaseTaskType): index of the phase "
+"whose child wave is currently running. 0 for ordinary tasks."
+msgstr ""
+"Для багатофазних конвеєрних завдань (MultiPhaseTaskType): індекс фази, "
+"дочірня хвиля якої зараз виконується. 0 для звичайних завдань."
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Group By"
+msgstr "Групувати за"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__hostname
+msgid "Hostname"
+msgstr "Ім'я хоста"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_worker__hostname
+msgid ""
+"Hostname of the machine running this worker. Used to give each machine its "
+"own worker record in multi-instance deployments."
+msgstr ""
+"Ім'я хоста машини, на якій працює цей виконавець. Використовується для "
+"надання кожній машині власного запису виконавця в багатоінстансних "
+"розгортаннях."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__id
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__id
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__id
+msgid "ID"
+msgstr "ID"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__unique_key
+msgid ""
+"Idempotency key. When set, only one task with this key may be active at a "
+"time. Pass on_conflict='reuse-running' (default) to get back the existing "
+"task, or on_conflict='raise' to raise AlreadyScheduledException."
+msgstr ""
+"Ключ ідемпотентності. Якщо встановлено, одночасно може бути активним лише "
+"одне завдання з цим ключем. Передайте on_conflict='reuse-running' (за "
+"замовчуванням), щоб отримати наявне завдання, або on_conflict='raise', щоб "
+"викликати AlreadyScheduledException."
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_type_form
+msgid "Identity"
+msgstr "Ідентифікація"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task_type__propagate_progress
+msgid ""
+"If enabled, calling update_progress() on a task of this type automatically "
+"averages sibling progress and writes it to the parent task, then recurses "
+"upward. Use on intermediate task types in multi-level hierarchies to "
+"propagate fine-grained progress to the root without manual on_child_done "
+"hooks."
+msgstr ""
+"Якщо увімкнено, виклик update_progress() для завдання цього типу автоматично "
+"усереднює прогрес сусідніх завдань і записує його в батьківське завдання, а "
+"потім рекурсивно піднімається вгору. Використовуйте для проміжних типів "
+"завдань у багаторівневих ієрархіях, щоб поширювати детальний прогрес до "
+"кореня без ручних хуків on_child_done."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task_type__notify_on_completion
+msgid ""
+"If enabled, the task creator receives a toast notification when a task of "
+"this type completes or fails."
+msgstr ""
+"Якщо увімкнено, творець завдання отримує спливаюче сповіщення, коли завдання "
+"цього типу завершується або завершується невдало."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__task_params
+msgid "JSON input for the task type's execute() method."
+msgstr "JSON-вхід для методу execute() типу завдання."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__task_result
+msgid "JSON output from the task type's execute() method."
+msgstr "JSON-вихід методу execute() типу завдання."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__last_heartbeat
+msgid "Last Heartbeat"
+msgstr "Останній сигнал життя"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__write_uid
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__write_uid
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__write_uid
+msgid "Last Updated by"
+msgstr "Востаннє оновив"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__write_date
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__write_date
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__write_date
+msgid "Last Updated on"
+msgstr "Останнє оновлення"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__priority
+msgid "Lower number = higher priority (0 is highest)."
+msgstr "Менше число = вищий пріоритет (0 — найвищий)."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__max_parallel_jobs
+msgid "Max Parallel Jobs"
+msgstr "Макс. паралельних завдань"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__max_retries
+msgid "Max Retries"
+msgstr "Макс. повторів"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__timeout
+msgid ""
+"Maximum execution time in seconds. 0 means no timeout. Worker will mark the "
+"task as failed if execution exceeds this limit."
+msgstr ""
+"Максимальний час виконання в секундах. 0 означає без обмеження. Виконавець "
+"позначить завдання як невдале, якщо виконання перевищить це обмеження."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_res_config_settings__gtq_vacuum_batch_size
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.res_config_settings_view_form
+msgid "Maximum number of tasks deleted per vacuum cron run."
+msgstr ""
+"Максимальна кількість завдань, що видаляються за один запуск cron-очищення."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__module
+msgid "Module"
+msgstr "Модуль"
+
+#. module: generic_task_queue
+#: model:ir.actions.act_window,name:generic_task_queue.action_generic_task_queue_my_tasks
+#: model:ir.ui.menu,name:generic_task_queue.menu_task_queue_my_tasks
+msgid "My Tasks"
+msgstr "Мої завдання"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__name
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__name
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__name
+msgid "Name"
+msgstr "Назва"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__retry_policy__no_retry
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task_type__default_retry_policy__no_retry
+msgid "No Retry"
+msgstr "Без повтору"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__notify_on_completion
+msgid "Notify On Completion"
+msgstr "Сповіщати при завершенні"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_res_config_settings__gtq_vacuum_days
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.res_config_settings_view_form
+msgid ""
+"Number of days to keep completed, failed, and cancelled tasks. Set to 0 to "
+"disable automatic cleanup."
+msgstr ""
+"Кількість днів зберігання виконаних, невдалих та скасованих завдань. "
+"Встановіть 0, щоб вимкнути автоматичне очищення."
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid "Only failed tasks can be retried."
+msgstr "Повторити можна лише завдання з помилкою."
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Parameters"
+msgstr "Параметри"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__parent_id
+msgid "Parent"
+msgstr "Батьківське"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Parent Task"
+msgstr "Батьківське завдання"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__parent_id
+msgid "Parent task. Used for splitting work into sub-tasks."
+msgstr ""
+"Батьківське завдання. Використовується для поділу роботи на підзавдання."
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid ""
+"Pass task specs positionally OR the keyword type_code / params_list "
+"shorthand, not both."
+msgstr ""
+"Передавайте специфікації завдань позиційно АБО скорочення з ключовими "
+"аргументами type_code / params_list, але не обидва способи одночасно."
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__state__pending
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Pending"
+msgstr "Очікує"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__phase
+msgid "Phase"
+msgstr "Фаза"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__phase_data
+msgid "Phase Data"
+msgstr "Дані фази"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__priority
+msgid "Priority"
+msgstr "Пріоритет"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__progress
+msgid "Progress"
+msgstr "Прогрес"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__propagate_progress
+msgid "Propagate Progress"
+msgstr "Поширювати прогрес"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Result"
+msgstr "Результат"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Retry"
+msgstr "Повторити"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__retry_policy__retry_any
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task_type__default_retry_policy__retry_any
+msgid "Retry Any"
+msgstr "Повторювати при будь-якій помилці"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__retry_count
+msgid "Retry Count"
+msgstr "Кількість повторів"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__retry_policy__retry_known
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task_type__default_retry_policy__retry_known
+msgid "Retry Known"
+msgstr "Повторювати при відомих помилках"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__retry_policy
+msgid "Retry Policy"
+msgstr "Політика повторів"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__channel
+msgid "Routing channel. Workers only pick up tasks matching their channels."
+msgstr ""
+"Канал маршрутизації. Виконавці беруть лише завдання, що відповідають їхнім "
+"каналам."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__runner_id
+msgid "Runner"
+msgstr "Виконувач"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__state__running
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Running"
+msgstr "Виконується"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task_type__service_name
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__service_name
+msgid "Service Name"
+msgstr "Назва сервісу"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task_type__service_name
+msgid ""
+"Service that exclusively handles this task type. Empty means any service may "
+"claim it."
+msgstr ""
+"Сервіс, що ексклюзивно обробляє цей тип завдання. Порожнє значення означає, "
+"що будь-який сервіс може його взяти."
+
+#. module: generic_task_queue
+#: model:ir.actions.act_window,name:generic_task_queue.action_task_queue_configuration
+msgid "Settings"
+msgstr "Налаштування"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__state
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__state
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "State"
+msgstr "Стан"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__task_error_data
+msgid ""
+"Structured error data (JSON). Use for programmatic error handling alongside "
+"task_error text."
+msgstr ""
+"Структуровані дані помилки (JSON). Використовуйте для програмної обробки "
+"помилок разом із текстом task_error."
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__state__stuck
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_worker__state__stuck
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Stuck"
+msgstr "Завис"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__child_count
+msgid "Sub-task Count"
+msgstr "Кількість підзавдань"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__child_ids
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Sub-tasks"
+msgstr "Підзавдання"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_form
+msgid "Task"
+msgstr "Завдання"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__task_error
+msgid "Task Error"
+msgstr "Помилка завдання"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__task_error_data
+msgid "Task Error Data"
+msgstr "Дані помилки завдання"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__task_params
+msgid "Task Parameters"
+msgstr "Параметри завдання"
+
+#. module: generic_task_queue
+#: model:ir.actions.act_window,name:generic_task_queue.action_generic_task_queue_task
+#: model:ir.ui.menu,name:generic_task_queue.menu_task_queue_root
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.res_config_settings_view_form
+msgid "Task Queue"
+msgstr "Черга завдань"
+
+#. module: generic_task_queue
+#: model:res.groups,name:generic_task_queue.group_task_queue_manager
+msgid "Task Queue Manager"
+msgstr "Менеджер черги завдань"
+
+#. module: generic_task_queue
+#: model:ir.model,name:generic_task_queue.model_generic_task_queue_task
+msgid "Task Queue Task"
+msgstr "Завдання черги завдань"
+
+#. module: generic_task_queue
+#: model:ir.model,name:generic_task_queue.model_generic_task_queue_task_type
+msgid "Task Queue Task Type"
+msgstr "Тип завдання черги завдань"
+
+#. module: generic_task_queue
+#: model:res.groups,name:generic_task_queue.group_task_queue_user
+msgid "Task Queue User"
+msgstr "Користувач черги завдань"
+
+#. module: generic_task_queue
+#: model:ir.model,name:generic_task_queue.model_generic_task_queue_worker
+msgid "Task Queue Worker"
+msgstr "Виконавець черги завдань"
+
+#. module: generic_task_queue
+#: model:ir.actions.server,name:generic_task_queue.ir_cron_gc_tasks_ir_actions_server
+msgid "Task Queue: Vacuum old tasks"
+msgstr "Черга завдань: очищення старих завдань"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__task_result
+msgid "Task Result"
+msgstr "Результат завдання"
+
+#. module: generic_task_queue
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.res_config_settings_view_form
+msgid "Task Retention"
+msgstr "Зберігання завдань"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_res_config_settings__gtq_vacuum_days
+msgid "Task Retention (days)"
+msgstr "Зберігання завдань (днів)"
+
+#. module: generic_task_queue
+#: model:ir.actions.act_window,name:generic_task_queue.action_generic_task_queue_task_type
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__task_types
+#: model:ir.ui.menu,name:generic_task_queue.menu_task_queue_task_types
+msgid "Task Types"
+msgstr "Типи завдань"
+
+#. module: generic_task_queue
+#: model:ir.actions.act_window,name:generic_task_queue.action_generic_task_queue_worker
+msgid "Task Workers"
+msgstr "Виконавці завдань"
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid "Task completed"
+msgstr "Завдання виконано"
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid "Task failed"
+msgstr "Завдання завершилося невдало"
+
+#. module: generic_task_queue
+#: model:ir.model.constraint,message:generic_task_queue.constraint_generic_task_queue_task_type_code_uniq
+msgid "Task type code must be unique."
+msgstr "Код типу завдання має бути унікальним."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__type_id
+msgid "Task type that defines how to execute this task."
+msgstr "Тип завдання, що визначає, як виконувати це завдання."
+
+#. module: generic_task_queue
+#: model:ir.ui.menu,name:generic_task_queue.menu_task_queue_tasks
+msgid "Tasks"
+msgstr "Завдання"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task_type__module
+msgid "Technical name of the Odoo module that provides this task type."
+msgstr "Технічна назва модуля Odoo, який надає цей тип завдання."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__timeout
+msgid "Timeout"
+msgstr "Час очікування"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__type_id
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Type"
+msgstr "Тип"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,help:generic_task_queue.field_generic_task_queue_task__runner_id
+msgid ""
+"UUID generated at claim time. Identifies the specific execution attempt. A "
+"task thread checks this before writing final state — if it no longer "
+"matches, the task was reassigned and the write is silently dropped (zombie-"
+"thread guard). Cleared when a task returns to pending."
+msgstr ""
+"UUID, згенерований під час захоплення завдання. Ідентифікує конкретну спробу "
+"виконання. Потік завдання перевіряє його перед записом фінального стану — "
+"якщо він більше не збігається, завдання було перепризначене, і запис мовчки "
+"відхиляється (захист від потоків-зомбі). Очищається, коли завдання "
+"повертається в стан очікування."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__unique_key
+msgid "Unique Key"
+msgstr "Унікальний ключ"
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid "Unknown task type '%(type_code)s'."
+msgstr "Невідомий тип завдання '%(type_code)s'."
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_worker__uuid
+msgid "Uuid"
+msgstr "UUID"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_res_config_settings__gtq_vacuum_batch_size
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.res_config_settings_view_form
+msgid "Vacuum Batch Size"
+msgstr "Розмір пакета очищення"
+
+#. module: generic_task_queue
+#: model:ir.model.fields.selection,name:generic_task_queue.selection__generic_task_queue_task__state__waiting
+msgid "Waiting for children"
+msgstr "Очікування підзавдань"
+
+#. module: generic_task_queue
+#: model:ir.model.fields,field_description:generic_task_queue.field_generic_task_queue_task__worker_id
+#: model_terms:ir.ui.view,arch_db:generic_task_queue.view_generic_task_queue_task_search
+msgid "Worker"
+msgstr "Виконавець"
+
+#. module: generic_task_queue
+#: model:ir.model.constraint,message:generic_task_queue.constraint_generic_task_queue_worker_uuid_uniq
+msgid "Worker UUID must be unique."
+msgstr "UUID виконавця має бути унікальним."
+
+#. module: generic_task_queue
+#: model:ir.ui.menu,name:generic_task_queue.menu_task_queue_workers
+msgid "Workers"
+msgstr "Виконавці"
+
+#. module: generic_task_queue
+#. odoo-python
+#: code:addons/generic_task_queue/models/generic_task_queue_task.py:0
+msgid ""
+"You cannot modify fields: %(fields)s. Use the task action buttons instead."
+msgstr ""
+"Ви не можете змінювати поля: %(fields)s. Натомість використовуйте кнопки дій "
+"завдання."

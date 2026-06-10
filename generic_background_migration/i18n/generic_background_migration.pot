@@ -1,0 +1,169 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* generic_background_migration
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 18.0\n"
+"Report-Msgid-Bugs-To: \n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: \n"
+"Plural-Forms: \n"
+
+#. module: generic_background_migration
+#: model:ir.model,name:generic_background_migration.model_generic_background_migration
+#: model_terms:ir.ui.view,arch_db:generic_background_migration.view_generic_background_migration_form
+msgid "Background Migration"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.actions.act_window,name:generic_background_migration.action_generic_background_migration
+#: model:ir.ui.menu,name:generic_background_migration.menu_task_queue_background_migrations
+#: model_terms:ir.ui.view,arch_db:generic_background_migration.view_generic_background_migration_list
+msgid "Background Migrations"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__migration_name
+msgid ""
+"Bare migration name (e.g. 'recompute-fields' from background-recompute-"
+"fields.py)."
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__name
+msgid "Composite identifier: module/version/migration_name."
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__create_uid
+msgid "Created by"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__create_date
+msgid "Created on"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__task_id
+msgid "Current or most recent task executing this migration."
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__date_completed
+msgid "Date Completed"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__display_name
+msgid "Display Name"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields.selection,name:generic_background_migration.selection__generic_background_migration__state__done
+msgid "Done"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields.selection,name:generic_background_migration.selection__generic_background_migration__state__failed
+msgid "Failed"
+msgstr ""
+
+#. module: generic_background_migration
+#: model_terms:ir.ui.view,arch_db:generic_background_migration.view_generic_background_migration_form
+msgid "Force Reschedule"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__id
+msgid "ID"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__write_uid
+msgid "Last Updated by"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__write_date
+msgid "Last Updated on"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__migration_name
+msgid "Migration Name"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__module_version
+msgid "Migration directory version (e.g. '18.0.1.2.3')."
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.constraint,message:generic_background_migration.constraint_generic_background_migration_module_version_name_uniq
+msgid "Migration must be unique per module/version/name."
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__module
+msgid "Module"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__module_version
+msgid "Module Version"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__name
+msgid "Name"
+msgstr ""
+
+#. module: generic_background_migration
+#. odoo-python
+#: code:addons/generic_background_migration/models/generic_background_migration.py:0
+msgid ""
+"Only system administrators can force-reschedule a background migration."
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields.selection,name:generic_background_migration.selection__generic_background_migration__state__pending
+msgid "Pending"
+msgstr ""
+
+#. module: generic_background_migration
+#: model_terms:ir.ui.view,arch_db:generic_background_migration.view_generic_background_migration_form
+msgid "Reset this migration to pending and re-enqueue it?"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__state
+msgid "State"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__task_id
+msgid "Task"
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__module
+msgid "Technical name of the Odoo module that owns this migration."
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__date_completed
+msgid "When the migration last reached a terminal state (done or failed)."
+msgstr ""
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__state
+msgid ""
+"pending — waiting to run or actively executing.\n"
+"done    — completed successfully.\n"
+"failed  — last attempt failed permanently; will be re-scheduled on the next module upgrade."
+msgstr ""

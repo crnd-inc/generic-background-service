@@ -1,0 +1,82 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* test_generic_task_queue
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 18.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-10 08:03+0000\n"
+"PO-Revision-Date: 2026-06-10 08:03+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: \n"
+"Plural-Forms: \n"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__create_uid
+msgid "Created by"
+msgstr "Створив"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__create_date
+msgid "Created on"
+msgstr "Дата створення"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__display_name
+msgid "Display Name"
+msgstr "Назва для відображення"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__id
+msgid "ID"
+msgstr "ID"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__write_uid
+msgid "Last Updated by"
+msgstr "Востаннє оновив"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__write_date
+msgid "Last Updated on"
+msgstr "Останнє оновлення"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__name
+msgid "Name"
+msgstr "Назва"
+
+#. module: test_generic_task_queue
+#: model_terms:ir.ui.view,arch_db:test_generic_task_queue.view_test_task_target_form
+msgid "Plan Task"
+msgstr "Запланувати завдання"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__processed
+msgid "Processed"
+msgstr "Оброблено"
+
+#. module: test_generic_task_queue
+#: model:ir.ui.menu,name:test_generic_task_queue.menu_test_task_target
+msgid "Test Targets"
+msgstr "Тестові цілі"
+
+#. module: test_generic_task_queue
+#: model:ir.model,name:test_generic_task_queue.model_test_task_target
+msgid "Test Task Target"
+msgstr "Тестова ціль завдання"
+
+#. module: test_generic_task_queue
+#: model:ir.actions.act_window,name:test_generic_task_queue.action_test_task_target
+msgid "Test Task Targets"
+msgstr "Тестові цілі завдань"
+
+#. module: test_generic_task_queue
+#: model:ir.model.fields,field_description:test_generic_task_queue.field_test_task_target__value
+msgid "Value"
+msgstr "Значення"

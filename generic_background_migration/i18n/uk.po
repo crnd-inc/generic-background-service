@@ -1,0 +1,180 @@
+# Translation of Odoo Server.
+# This file contains the translation of the following modules:
+# 	* generic_background_migration
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Odoo Server 18.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-10 08:03+0000\n"
+"PO-Revision-Date: 2026-06-10 08:03+0000\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: \n"
+"Plural-Forms: \n"
+
+#. module: generic_background_migration
+#: model:ir.model,name:generic_background_migration.model_generic_background_migration
+#: model_terms:ir.ui.view,arch_db:generic_background_migration.view_generic_background_migration_form
+msgid "Background Migration"
+msgstr "Фонова міграція"
+
+#. module: generic_background_migration
+#: model:ir.actions.act_window,name:generic_background_migration.action_generic_background_migration
+#: model:ir.ui.menu,name:generic_background_migration.menu_task_queue_background_migrations
+#: model_terms:ir.ui.view,arch_db:generic_background_migration.view_generic_background_migration_list
+msgid "Background Migrations"
+msgstr "Фонові міграції"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__migration_name
+msgid ""
+"Bare migration name (e.g. 'recompute-fields' from background-recompute-"
+"fields.py)."
+msgstr ""
+"Базова назва міграції (напр. 'recompute-fields' з background-recompute-"
+"fields.py)."
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__name
+msgid "Composite identifier: module/version/migration_name."
+msgstr "Складений ідентифікатор: module/version/migration_name."
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__create_uid
+msgid "Created by"
+msgstr "Створив"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__create_date
+msgid "Created on"
+msgstr "Дата створення"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__task_id
+msgid "Current or most recent task executing this migration."
+msgstr "Поточне або останнє завдання, що виконує цю міграцію."
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__date_completed
+msgid "Date Completed"
+msgstr "Дата завершення"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__display_name
+msgid "Display Name"
+msgstr "Назва для відображення"
+
+#. module: generic_background_migration
+#: model:ir.model.fields.selection,name:generic_background_migration.selection__generic_background_migration__state__done
+msgid "Done"
+msgstr "Виконано"
+
+#. module: generic_background_migration
+#: model:ir.model.fields.selection,name:generic_background_migration.selection__generic_background_migration__state__failed
+msgid "Failed"
+msgstr "Помилка"
+
+#. module: generic_background_migration
+#: model_terms:ir.ui.view,arch_db:generic_background_migration.view_generic_background_migration_form
+msgid "Force Reschedule"
+msgstr "Примусово перепланувати"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__id
+msgid "ID"
+msgstr "ID"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__write_uid
+msgid "Last Updated by"
+msgstr "Востаннє оновив"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__write_date
+msgid "Last Updated on"
+msgstr "Останнє оновлення"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__migration_name
+msgid "Migration Name"
+msgstr "Назва міграції"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__module_version
+msgid "Migration directory version (e.g. '18.0.1.2.3')."
+msgstr "Версія каталогу міграції (напр. '18.0.1.2.3')."
+
+#. module: generic_background_migration
+#: model:ir.model.constraint,message:generic_background_migration.constraint_generic_background_migration_module_version_name_uniq
+msgid "Migration must be unique per module/version/name."
+msgstr ""
+"Міграція має бути унікальною для кожної комбінації модуль/версія/назва."
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__module
+msgid "Module"
+msgstr "Модуль"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__module_version
+msgid "Module Version"
+msgstr "Версія модуля"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__name
+msgid "Name"
+msgstr "Назва"
+
+#. module: generic_background_migration
+#. odoo-python
+#: code:addons/generic_background_migration/models/generic_background_migration.py:0
+msgid "Only system administrators can force-reschedule a background migration."
+msgstr ""
+"Лише системні адміністратори можуть примусово перепланувати фонову міграцію."
+
+#. module: generic_background_migration
+#: model:ir.model.fields.selection,name:generic_background_migration.selection__generic_background_migration__state__pending
+msgid "Pending"
+msgstr "Очікує"
+
+#. module: generic_background_migration
+#: model_terms:ir.ui.view,arch_db:generic_background_migration.view_generic_background_migration_form
+msgid "Reset this migration to pending and re-enqueue it?"
+msgstr "Скинути цю міграцію в стан очікування та поставити її в чергу знову?"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__state
+msgid "State"
+msgstr "Стан"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,field_description:generic_background_migration.field_generic_background_migration__task_id
+msgid "Task"
+msgstr "Завдання"
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__module
+msgid "Technical name of the Odoo module that owns this migration."
+msgstr "Технічна назва модуля Odoo, якому належить ця міграція."
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__date_completed
+msgid "When the migration last reached a terminal state (done or failed)."
+msgstr "Коли міграція востаннє досягла кінцевого стану (виконано або помилка)."
+
+#. module: generic_background_migration
+#: model:ir.model.fields,help:generic_background_migration.field_generic_background_migration__state
+msgid ""
+"pending — waiting to run or actively executing.\n"
+"done    — completed successfully.\n"
+"failed  — last attempt failed permanently; will be re-scheduled on the next "
+"module upgrade."
+msgstr ""
+"pending — очікує запуску або активно виконується.\n"
+"done    — успішно завершено.\n"
+"failed  — остання спроба завершилася остаточною помилкою; буде перепланована "
+"під час наступного оновлення модуля."
