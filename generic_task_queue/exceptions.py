@@ -19,6 +19,24 @@ class RetryTask(Exception):
             + (" after %s" % after if after else ""))
 
 
+class ChildTasksFailedError(Exception):
+    """Passed to on_failure() when a waiting parent task is failed because
+    one or more of its children failed non-retriably.
+
+    Lets a task type's on_failure() hook distinguish "my own execute() raised"
+    from "my children failed" — the parent never executed business logic in
+    the latter case. Carries the failed child tasks for inspection.
+
+    :param failed_children: recordset of the children that failed.
+    """
+
+    def __init__(self, failed_children):
+        self.failed_children = failed_children
+        super().__init__(
+            "Child tasks failed: %s" % ', '.join(
+                failed_children.mapped('name')))
+
+
 class AlreadyScheduledException(Exception):
     """Raised by create_task() when on_conflict='raise' and a task with
     the same unique_key is already active."""

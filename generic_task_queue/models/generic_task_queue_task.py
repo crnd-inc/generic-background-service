@@ -547,6 +547,15 @@ class GenericTaskQueueTask(models.Model):
                        or c.retry_count >= c.max_retries))
 
         if non_retriable_failures:
+            # Notify the task type that the parent is failing because its
+            # children failed (its own execute() never raised). Mirrors the
+            # on_failure call the worker makes on the execute path, so task
+            # types that finalize external bookkeeping in on_failure (e.g.
+            # marking a migration record failed) fire here too.
+            from .. import exceptions as gtq_exceptions
+            self._run_task_type_hook(
+                'on_failure',
+                gtq_exceptions.ChildTasksFailedError(non_retriable_failures))
             self.action_fail(
                 "Child tasks failed: %s" % ', '.join(
                     non_retriable_failures.mapped('name')))
@@ -560,30 +569,7 @@ class GenericTaskQueueTask(models.Model):
         # All children done (or cancelled) — call the hook and complete
         # the parent. Wrap in a savepoint so a DB error inside the hook
         # rolls back only the hook's changes; action_done() still commits.
-        from ..service.task_type_registry import TaskTypeRegistry
-        registry = TaskTypeRegistry()
-        result = None
-        # Run the hook as the pipeline's creator (this method runs in the
-        # worker's SUPERUSER poll context). The task type's logic is thus
-        # least-privilege; framework writes sudo() internally. `self` stays
-        # SUPERUSER-bound for the re-arm check and action_done() below.
-        # create_uid is always set (required magic field) — no fallback.
-        hook_env = self.env(user=self.create_uid.id)
-        hook_parent = self.with_env(hook_env)
-        try:
-            task_type_cls = registry.get_task_type(self.type_code)
-            with self.env.cr.savepoint():
-                task_type = task_type_cls()
-                result = task_type.on_all_children_done(hook_env, hook_parent)
-        except KeyError:
-            _logger.debug(
-                "Task type %r not found for task %d, "
-                "skipping on_all_children_done",
-                self.type_code, self.id)
-        except Exception:
-            _logger.error(
-                "Error in on_all_children_done for task %d",
-                self.id, exc_info=True)
+        result = self._run_task_type_hook('on_all_children_done')
 
         # The hook may have spawned a new wave of children (multi-phase /
         # orchestrator task types). on_all_children_done ran inline in this
@@ -596,6 +582,46 @@ class GenericTaskQueueTask(models.Model):
             return
 
         self.action_done(result)
+
+    @api.private
+    def _run_task_type_hook(self, hook_name, *extra_args):
+        """ Invoke a task-type lifecycle hook on this task, safely.
+
+            Resolves the task type from the registry and calls
+            ``hook_name(env, task, *extra_args)`` as the task's **creator**
+            (this runs in the worker's SUPERUSER poll context, so the hook
+            must be least-privilege; framework writes sudo() internally).
+            ``self`` stays SUPERUSER-bound for any state transition the
+            caller performs afterwards.
+
+            The call is wrapped in a savepoint so a DB error inside the hook
+            rolls back only the hook's changes. An unknown task type is a
+            no-op (logged at debug); any other hook error is logged and
+            swallowed. ``create_uid`` is always set (required magic field).
+
+            :return: the hook's return value, or None on error / unknown type
+        """
+        self.ensure_one()
+        from ..service.task_type_registry import TaskTypeRegistry
+        hook_env = self.env(user=self.create_uid.id)
+        hook_self = self.with_env(hook_env)
+        try:
+            task_type_cls = TaskTypeRegistry().get_task_type(self.type_code)
+        except KeyError:
+            _logger.debug(
+                "Task type %r not found for task %d, skipping %s",
+                self.type_code, self.id, hook_name)
+            return None
+        try:
+            with self.env.cr.savepoint():
+                task_type = task_type_cls()
+                return getattr(task_type, hook_name)(
+                    hook_env, hook_self, *extra_args)
+        except Exception:
+            _logger.error(
+                "Error in %s for task %d", hook_name, self.id,
+                exc_info=True)
+            return None
 
     @api.private
     def spawn_children(self, *specs, type_code=None, params_list=None,

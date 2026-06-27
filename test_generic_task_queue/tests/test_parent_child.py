@@ -249,6 +249,34 @@ class TestParentWaitsForChildren(TransactionCase):
         parent.sudo()._check_waiting_parent()
         self.assertEqual(parent.state, 'failed')
 
+    def test_on_failure_hook_fires_when_child_fails(self):
+        """When a waiting parent fails because a child failed non-retriably,
+        the parent task type's on_failure hook fires with a
+        ChildTasksFailedError — so subclasses that finalize external
+        bookkeeping in on_failure react to child failures too."""
+        from odoo.addons.generic_task_queue.service.task_type_registry import (
+            TaskTypeRegistry,
+        )
+        from odoo.addons.generic_task_queue.exceptions import (
+            ChildTasksFailedError,
+        )
+
+        parent, children = self._make_waiting_parent_with_children(1)
+        children[0].retry_policy = 'no_retry'
+        children[0].sudo().action_assign(self.worker)
+        children[0].sudo().action_start()
+        children[0].sudo().action_fail('permanent error')
+
+        cls = TaskTypeRegistry().get_task_type('test.task.type.noop')
+        with patch.object(cls, 'on_failure') as mock_failure:
+            parent.sudo()._check_waiting_parent()
+
+        self.assertEqual(parent.state, 'failed')
+        mock_failure.assert_called_once()
+        exc = mock_failure.call_args.args[2]
+        self.assertIsInstance(exc, ChildTasksFailedError)
+        self.assertIn(children[0], exc.failed_children)
+
 
 class TestTaskErrorData(TransactionCase):
     """Test the task_error_data JSON field."""
