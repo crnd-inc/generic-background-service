@@ -329,17 +329,12 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 if task.state == 'waiting':
                     return
 
-                # Call on_success hook inside a savepoint so a DB error
-                # in the hook rolls back only the hook's changes and leaves
-                # the outer transaction (execute() side-effects + action_done)
-                # intact.
-                try:
-                    with env.cr.savepoint():
-                        task_type.on_success(user_env, user_task, result)
-                except Exception:
-                    _logger.error(
-                        "Error in on_success hook for task %d",
-                        task_id, exc_info=True)
+                # Run on_success via the shared hook runner: creator identity,
+                # savepoint isolation (so a hook DB error leaves execute()'s
+                # side-effects + action_done intact) and error swallowing all
+                # live there. Reuse the instance that ran execute().
+                task._run_task_type_hook(
+                    'on_success', result, task_type=task_type)
 
                 try:
                     task.action_done(result, runner_id=runner_id)
@@ -384,21 +379,10 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                     # Permanent failure
                     _logger.error(
                         "Task %d failed", task_id, exc_info=True)
-                    registry = TaskTypeRegistry()
-                    task_type_cls = registry.get_task_type(task.type_code)
-                    task_type = task_type_cls()
-                    # Same savepoint guard as on_success: a DB error in the
-                    # hook must not abort the transaction before action_fail.
-                    # Run the hook as the creating user (see execute() above).
-                    user_env = self._creator_env(env, task)
-                    user_task = task.with_env(user_env)
-                    try:
-                        with env.cr.savepoint():
-                            task_type.on_failure(user_env, user_task, exc)
-                    except Exception:
-                        _logger.error(
-                            "Error in on_failure hook for task %d",
-                            task_id, exc_info=True)
+                    # Same savepoint guard as on_success (a hook DB error must
+                    # not abort the transaction before action_fail); the shared
+                    # runner resolves the task type and runs it as the creator.
+                    task._run_task_type_hook('on_failure', exc)
                     try:
                         task.action_fail(
                             traceback.format_exc(), runner_id=runner_id)
@@ -661,17 +645,12 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 parent = child_task.parent_id
                 if parent.state != 'waiting':
                     return
-                registry = TaskTypeRegistry()
-                task_type_cls = registry.get_task_type(parent.type_code)
-                task_type = task_type_cls()
-                # Run the hook as the parent's creator (see execute()): the
-                # task type's logic is least-privilege; framework writes
-                # sudo() internally.
-                user_env = self._creator_env(env, parent)
-                task_type.on_child_done(
-                    user_env,
-                    parent.with_env(user_env),
-                    child_task.with_env(user_env))
+                # Shared hook runner: resolves the parent's task type, runs
+                # on_child_done as the parent's creator, rebinds child_task to
+                # that env. No savepoint — the hook is alone in this fresh
+                # transaction, so a failure just rolls the whole thing back.
+                parent._run_task_type_hook(
+                    'on_child_done', child_task, savepoint=False)
         except Exception:
             _logger.error(
                 "Error in on_child_done for child task %d",

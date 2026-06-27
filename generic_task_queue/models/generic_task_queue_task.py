@@ -584,39 +584,63 @@ class GenericTaskQueueTask(models.Model):
         self.action_done(result)
 
     @api.private
-    def _run_task_type_hook(self, hook_name, *extra_args):
+    def _run_task_type_hook(self, hook_name, *extra_args,
+                            task_type=None, savepoint=True):
         """ Invoke a task-type lifecycle hook on this task, safely.
 
-            Resolves the task type from the registry and calls
-            ``hook_name(env, task, *extra_args)`` as the task's **creator**
-            (this runs in the worker's SUPERUSER poll context, so the hook
-            must be least-privilege; framework writes sudo() internally).
-            ``self`` stays SUPERUSER-bound for any state transition the
-            caller performs afterwards.
+            Single entry point for running any lifecycle hook
+            (on_success / on_failure / on_child_done / on_all_children_done),
+            so the cross-cutting guarantees live in one place:
 
-            The call is wrapped in a savepoint so a DB error inside the hook
-            rolls back only the hook's changes. An unknown task type is a
-            no-op (logged at debug); any other hook error is logged and
-            swallowed. ``create_uid`` is always set (required magic field).
+            - **Creator identity.** The hook runs as the task's creator
+              (least-privilege). ``self`` and any recordset in ``extra_args``
+              are rebound to the creator env; framework writes of protected
+              fields sudo() internally. The caller's own ``self`` is untouched,
+              so it can keep doing state transitions on its env afterwards.
+            - **Task type.** Resolved from the registry unless an instance is
+              passed via ``task_type`` (lets the execute path reuse the very
+              instance that ran ``execute()``). An unknown task type is a no-op
+              (debug log).
+            - **Isolation.** Wrapped in a savepoint by default so a DB error in
+              the hook rolls back only the hook's changes; pass
+              ``savepoint=False`` when the hook is alone in its transaction and
+              there is nothing after it to protect.
+            - **Crash safety.** Any hook error is logged and swallowed so a
+              buggy hook never crashes the worker or the poll loop.
 
+            ``create_uid`` is always set (a required magic field).
+
+            :param hook_name: name of the hook method to call
+            :param extra_args: extra positional args after ``(env, task)``;
+                recordsets among them are rebound to the creator env
+            :param task_type: a task-type instance to reuse, or None to resolve
+            :param savepoint: wrap the call in a savepoint (default True)
             :return: the hook's return value, or None on error / unknown type
         """
         self.ensure_one()
-        from ..service.task_type_registry import TaskTypeRegistry
         hook_env = self.env(user=self.create_uid.id)
         hook_self = self.with_env(hook_env)
+        hook_args = [
+            arg.with_env(hook_env) if isinstance(arg, models.BaseModel)
+            else arg
+            for arg in extra_args
+        ]
+        if task_type is None:
+            from ..service.task_type_registry import TaskTypeRegistry
+            try:
+                task_type = TaskTypeRegistry().get_task_type(self.type_code)()
+            except KeyError:
+                _logger.debug(
+                    "Task type %r not found for task %d, skipping %s",
+                    self.type_code, self.id, hook_name)
+                return None
         try:
-            task_type_cls = TaskTypeRegistry().get_task_type(self.type_code)
-        except KeyError:
-            _logger.debug(
-                "Task type %r not found for task %d, skipping %s",
-                self.type_code, self.id, hook_name)
-            return None
-        try:
-            with self.env.cr.savepoint():
-                task_type = task_type_cls()
-                return getattr(task_type, hook_name)(
-                    hook_env, hook_self, *extra_args)
+            if savepoint:
+                with self.env.cr.savepoint():
+                    return getattr(task_type, hook_name)(
+                        hook_env, hook_self, *hook_args)
+            return getattr(task_type, hook_name)(
+                hook_env, hook_self, *hook_args)
         except Exception:
             _logger.error(
                 "Error in %s for task %d", hook_name, self.id,

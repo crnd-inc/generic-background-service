@@ -5,6 +5,9 @@ from odoo import exceptions
 from odoo.addons.generic_task_queue.service.task_type import (
     AbstractTaskType, ChildResult)
 
+# Logger the hook runner uses when it swallows a hook error.
+_HOOK_LOGGER = 'odoo.addons.generic_task_queue.models.generic_task_queue_task'
+
 
 class TestWaitingState(TransactionCase):
     """Test the 'waiting' state for parent tasks that spawn children."""
@@ -653,3 +656,101 @@ class TestPropagateProgress(TransactionCase):
             root.update_progress(50)
 
         mock_propagate.assert_not_called()
+
+
+class TestRunTaskTypeHook(TransactionCase):
+    """The shared _run_task_type_hook runner: creator identity, recordset
+    rebinding, savepoint isolation, error swallowing and instance reuse."""
+
+    def setUp(self):
+        super().setUp()
+        self.Task = self.env['generic.task.queue.task']
+        self.creator = self.env['res.users'].create({
+            'name': 'Hook Creator',
+            'login': 'hook_creator',
+            'groups_id': [(6, 0, [self.env.ref('base.group_user').id])],
+        })
+
+    def _task(self, **kw):
+        return self.Task.with_user(self.creator).create_task(
+            'test.task.type.noop', name='Hooked', **kw)
+
+    def _noop_cls(self):
+        from odoo.addons.generic_task_queue.service.task_type_registry import (
+            TaskTypeRegistry,
+        )
+        return TaskTypeRegistry().get_task_type('test.task.type.noop')
+
+    def test_runs_as_creator_and_rebinds_recordset_args(self):
+        """The hook runs as the task's creator even when invoked from a
+        superuser context, and recordset extra-args are rebound to that env."""
+        task = self._task()
+        child = self.Task.with_user(self.creator).create_task(
+            'test.task.type.noop', name='Child', parent_id=task.id)
+
+        with patch.object(self._noop_cls(), 'on_child_done') as mock_hook:
+            # Invoked from the superuser env, as the worker poll loop does.
+            task.sudo()._run_task_type_hook(
+                'on_child_done', child, savepoint=False)
+
+        mock_hook.assert_called_once()
+        env_arg, parent_arg, child_arg = mock_hook.call_args.args
+        self.assertEqual(env_arg.uid, self.creator.id)
+        self.assertEqual(parent_arg.env.uid, self.creator.id)
+        self.assertEqual(child_arg.env.uid, self.creator.id)
+        self.assertEqual(parent_arg.id, task.id)
+        self.assertEqual(child_arg.id, child.id)
+
+    def test_reuses_provided_task_type_instance(self):
+        """A passed task_type instance is reused (no registry lookup);
+        non-recordset args pass through and the return value propagates."""
+        task = self._task()
+        creator_id = self.creator.id
+
+        class _Recorder:
+            seen = None
+
+            def on_success(self, env, t, result):
+                self.__class__.seen = (env.uid, t.id, result)
+                return 'done'
+
+        out = task.sudo()._run_task_type_hook(
+            'on_success', {'k': 1}, task_type=_Recorder())
+
+        self.assertEqual(out, 'done')
+        self.assertEqual(_Recorder.seen, (creator_id, task.id, {'k': 1}))
+
+    def test_unknown_task_type_is_noop(self):
+        """An unregistered task type is a no-op (returns None, no raise)."""
+        task = self._task()
+        path = ('odoo.addons.generic_task_queue.service.task_type_registry'
+                '.TaskTypeRegistry.get_task_type')
+        with patch(path, side_effect=KeyError('gone')):
+            result = task.sudo()._run_task_type_hook('on_success', None)
+        self.assertIsNone(result)
+
+    def test_hook_exception_is_swallowed(self):
+        """A hook that raises never propagates — it is logged and returns
+        None."""
+        task = self._task()
+        with patch.object(self._noop_cls(), 'on_success',
+                          side_effect=ValueError('boom')):
+            with self.assertLogs(_HOOK_LOGGER, level='ERROR'):
+                result = task.sudo()._run_task_type_hook('on_success', None)
+        self.assertIsNone(result)
+
+    def test_savepoint_rolls_back_hook_writes_on_error(self):
+        """With savepoint=True a hook DB write is rolled back when the hook
+        then raises, leaving the surrounding transaction usable."""
+        task = self._task()
+
+        def _hook(self_tt, env, t, result):
+            t.sudo().write({'progress': 42})
+            raise ValueError('boom')
+
+        with patch.object(self._noop_cls(), 'on_success', _hook):
+            with self.assertLogs(_HOOK_LOGGER, level='ERROR'):
+                task.sudo()._run_task_type_hook('on_success', None)
+
+        task.invalidate_recordset(['progress'])
+        self.assertEqual(task.progress, 0)
