@@ -748,6 +748,8 @@ class GenericTaskQueueTask(models.Model):
                 every child (homogeneous shorthand)
             :return: recordset of created child tasks
         """
+        from ..service.task_type_registry import TaskTypeRegistry
+        registry = TaskTypeRegistry()
         task_specs = self._collect_specs(
             specs, type_code, params_list, common_vals)
         total = len(task_specs)
@@ -761,6 +763,25 @@ class GenericTaskQueueTask(models.Model):
             # spec.to_vals() carries type_code/task_params and any per-child
             # override (name/channel/… overriding the defaults set above).
             vals.update(spec.to_vals())
+            # Apply the task type's retry defaults when the spec didn't set
+            # them — mirrors create_tasks()/create_task(). Without this,
+            # children silently fall back to the field defaults (no_retry /
+            # max_retries=0), ignoring the retry policy declared on their
+            # task type. Channel intentionally still inherits the parent's
+            # channel (set above), not the type's _default_channel.
+            try:
+                cls = registry.get_task_type(spec.type_code)
+            except KeyError:
+                cls = None
+            if cls is not None:
+                vals.setdefault('retry_policy', cls._retry_policy)
+                vals.setdefault('max_retries', cls._max_retries)
+            # spec-provided retry_policy is already normalized by to_vals();
+            # normalize again here in case the *type default* is a deprecated
+            # alias (parity with create_tasks()/create_task()).
+            if vals.get('retry_policy'):
+                vals['retry_policy'] = normalize_retry_policy(
+                    vals['retry_policy'])
             vals_list.append(vals)
 
         # Children must belong to the task's creator — not to whoever's

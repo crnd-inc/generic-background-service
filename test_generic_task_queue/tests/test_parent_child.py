@@ -127,6 +127,71 @@ class TestCreateChildren(TransactionCase):
         )
         self.assertIn('My Batch', children[0].name)
 
+    def test_create_children_inherits_retry_defaults_from_task_type(self):
+        """Children inherit their task type's _retry_policy / _max_retries
+        (mirrors create_task), instead of silently falling back to the
+        no_retry / max_retries=0 field defaults."""
+        from odoo.addons.generic_task_queue.service.task_type_registry import (
+            TaskTypeRegistry,
+        )
+        cls = TaskTypeRegistry().get_task_type('test.task.type.noop')
+        orig_policy, orig_max = cls._retry_policy, cls._max_retries
+        cls._retry_policy, cls._max_retries = 'retry_any', 4
+        try:
+            parent = self.Task.create_task('test.task.type.noop', name='P')
+            children = self.Task.create_children(
+                parent, type_code='test.task.type.noop',
+                params_list=[{'i': 1}],
+            )
+        finally:
+            cls._retry_policy, cls._max_retries = orig_policy, orig_max
+
+        self.assertEqual(children[0].retry_policy, 'retry_any')
+        self.assertEqual(children[0].max_retries, 4)
+
+    def test_create_children_explicit_retry_overrides_task_type(self):
+        """An explicit retry override on the spawn call wins over the task
+        type's class default."""
+        from odoo.addons.generic_task_queue.service.task_type_registry import (
+            TaskTypeRegistry,
+        )
+        cls = TaskTypeRegistry().get_task_type('test.task.type.noop')
+        orig_policy, orig_max = cls._retry_policy, cls._max_retries
+        cls._retry_policy, cls._max_retries = 'retry_any', 4
+        try:
+            parent = self.Task.create_task('test.task.type.noop', name='P')
+            children = self.Task.create_children(
+                parent, type_code='test.task.type.noop',
+                params_list=[{'i': 1}],
+                retry_policy='no_retry', max_retries=0,
+            )
+        finally:
+            cls._retry_policy, cls._max_retries = orig_policy, orig_max
+
+        self.assertEqual(children[0].retry_policy, 'no_retry')
+        self.assertEqual(children[0].max_retries, 0)
+
+    def test_create_children_normalizes_deprecated_type_default(self):
+        """A deprecated retry_policy alias declared as a task type default is
+        normalized to its canonical name before reaching the Selection field
+        (parity with create_tasks); otherwise create() would reject it."""
+        from odoo.addons.generic_task_queue.service.task_type_registry import (
+            TaskTypeRegistry,
+        )
+        cls = TaskTypeRegistry().get_task_type('test.task.type.noop')
+        orig_policy = cls._retry_policy
+        cls._retry_policy = 'retriable'   # deprecated alias → 'retry_any'
+        try:
+            parent = self.Task.create_task('test.task.type.noop', name='P')
+            children = self.Task.create_children(
+                parent, type_code='test.task.type.noop',
+                params_list=[{'i': 1}],
+            )
+        finally:
+            cls._retry_policy = orig_policy
+
+        self.assertEqual(children[0].retry_policy, 'retry_any')
+
 
 class TestParentWaitsForChildren(TransactionCase):
     """Test the worker logic that completes waiting parents."""
