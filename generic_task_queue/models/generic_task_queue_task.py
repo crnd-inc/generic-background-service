@@ -7,7 +7,8 @@ import psycopg2.errors
 from odoo import models, fields, api, exceptions
 from odoo.addons.generic_mixin.tools.x2m_agg_utils import read_counts_for_o2m
 
-from ..exceptions import AlreadyScheduledException
+from ..exceptions import (
+    AlreadyScheduledException, RetryTask, KNOWN_TRANSIENT_ERRORS)
 from ..tools.task_spec import TaskSpec, normalize_retry_policy
 
 _logger = logging.getLogger(__name__)
@@ -568,24 +569,63 @@ class GenericTaskQueueTask(models.Model):
 
         # All children done (or cancelled) — call the hook and complete
         # the parent. Wrap in a savepoint so a DB error inside the hook
-        # rolls back only the hook's changes; action_done() still commits.
-        result = self._run_task_type_hook('on_all_children_done')
+        # rolls back only the hook's changes. Use reraise=True: unlike the
+        # best-effort progress hooks, a failure here must NOT let the parent
+        # complete as 'done' — otherwise a hook that raises (e.g. a
+        # multi-phase task type whose next-wave planning throws) would be
+        # rolled back yet the parent marked successful, silently dropping the
+        # remaining work.
+        #
+        # Classify the failure like the execute path (_should_auto_retry):
+        # a transient DB error or an explicit RetryTask is NOT a permanent
+        # failure — leave the parent 'waiting' so the poll loop re-runs
+        # on_all_children_done on a later cycle. Only genuinely unexpected
+        # errors fail the parent.
+        try:
+            result = self._run_task_type_hook(
+                'on_all_children_done', reraise=True)
+        except KNOWN_TRANSIENT_ERRORS:
+            # These abort the whole transaction (savepoint rollback cannot
+            # recover them), so re-raise and let the poll loop roll back the
+            # outer transaction and re-check this parent next cycle.
+            _logger.info(
+                "on_all_children_done for task %d hit a transient DB error; "
+                "will re-check on the next poll cycle.", self.id)
+            raise
+        except RetryTask:
+            # The hook asked to retry (e.g. next-wave planning found a
+            # precondition not yet satisfied). Leave the parent 'waiting'; it
+            # is re-evaluated on the next poll cycle. The requested delay is
+            # not honoured here — retry cadence follows the poll interval.
+            _logger.info(
+                "on_all_children_done for task %d requested a retry; will "
+                "re-check on the next poll cycle.", self.id)
+            return
+        except Exception as exc:
+            _logger.error(
+                "on_all_children_done hook failed for task %d; failing the "
+                "parent instead of completing it.", self.id, exc_info=True)
+            self.action_fail("on_all_children_done failed: %s" % exc)
+            return
 
         # The hook may have spawned a new wave of children (multi-phase /
-        # orchestrator task types). on_all_children_done ran inline in this
-        # same transaction, so re-reading child_ids here is race-free: if a
-        # fresh wave is now live, stay in 'waiting' and let the next poll
-        # cycle re-evaluate this parent when that wave finishes.
+        # orchestrator task types) or transitioned the parent itself. It ran
+        # inline in this same transaction, so re-reading here is race-free.
         self.invalidate_recordset(['child_ids', 'state'])
-        if self.state == 'waiting' and self.child_ids.filtered(
-                lambda c: c.state in ACTIVE_STATES):
+        if self.state != 'waiting':
+            # The hook already moved the parent out of 'waiting' (e.g. failed
+            # it). Respect that decision — do not override with action_done.
+            return
+        if self.child_ids.filtered(lambda c: c.state in ACTIVE_STATES):
+            # A fresh wave is live; stay 'waiting' and let the next poll cycle
+            # re-evaluate this parent when that wave finishes.
             return
 
         self.action_done(result)
 
     @api.private
     def _run_task_type_hook(self, hook_name, *extra_args,
-                            task_type=None, savepoint=True):
+                            task_type=None, savepoint=True, reraise=False):
         """ Invoke a task-type lifecycle hook on this task, safely.
 
             Single entry point for running any lifecycle hook
@@ -605,8 +645,12 @@ class GenericTaskQueueTask(models.Model):
               the hook rolls back only the hook's changes; pass
               ``savepoint=False`` when the hook is alone in its transaction and
               there is nothing after it to protect.
-            - **Crash safety.** Any hook error is logged and swallowed so a
-              buggy hook never crashes the worker or the poll loop.
+            - **Crash safety.** By default any hook error is logged and
+              swallowed so a buggy best-effort hook (progress, notifications)
+              never crashes the worker or the poll loop. Pass ``reraise=True``
+              for hooks whose failure must change control flow (e.g.
+              ``on_all_children_done``, where a swallowed error would let the
+              parent complete as ``done`` and drop the remaining work).
 
             ``create_uid`` is always set (a required magic field).
 
@@ -615,6 +659,8 @@ class GenericTaskQueueTask(models.Model):
                 recordsets among them are rebound to the creator env
             :param task_type: a task-type instance to reuse, or None to resolve
             :param savepoint: wrap the call in a savepoint (default True)
+            :param reraise: re-raise the hook's exception (after logging and
+                savepoint rollback) instead of swallowing it (default False)
             :return: the hook's return value, or None on error / unknown type
         """
         self.ensure_one()
@@ -642,6 +688,12 @@ class GenericTaskQueueTask(models.Model):
             return getattr(task_type, hook_name)(
                 hook_env, hook_self, *hook_args)
         except Exception:
+            if reraise:
+                # The caller opted to handle (and log) the exception itself —
+                # e.g. classify transient vs genuine and fail the parent
+                # accordingly. The savepoint (if any) has already rolled back
+                # the hook's changes; just propagate without double-logging.
+                raise
             _logger.error(
                 "Error in %s for task %d", hook_name, self.id,
                 exc_info=True)

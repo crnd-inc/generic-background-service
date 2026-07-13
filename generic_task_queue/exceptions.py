@@ -1,3 +1,16 @@
+import psycopg2.errors
+
+# psycopg2 error types that are always transient and safe to retry. These
+# abort the whole PostgreSQL transaction (a savepoint rollback does NOT
+# recover them), so callers must roll back the outer transaction and retry
+# rather than trying to write (e.g. mark a task failed) afterwards.
+KNOWN_TRANSIENT_ERRORS = (
+    psycopg2.errors.SerializationFailure,
+    psycopg2.errors.DeadlockDetected,
+    psycopg2.errors.LockNotAvailable,
+)
+
+
 class RetryTask(Exception):
     """Raised by execute() to request an automatic retry.
 

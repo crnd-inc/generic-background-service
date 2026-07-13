@@ -253,6 +253,58 @@ class TestParentWaitsForChildren(TransactionCase):
 
         self.assertEqual(parent.state, 'done')
 
+    def _raising_parent_ready_to_finalize(self, raise_kind='error'):
+        """Create a 'raising.on.all.done' parent, run execute() so it spawns
+        one child and waits, then complete the child. The parent is left
+        'waiting' and ready for _check_waiting_parent (which runs the hook)."""
+        from odoo.addons.generic_task_queue.service.task_type_registry \
+            import TaskTypeRegistry
+        parent = self.Task.create_task(
+            'test.task.type.raising.on.all.done', name='Raising Parent',
+            params={'raise_kind': raise_kind})
+        parent.sudo().action_assign(self.worker)
+        parent.sudo().action_start()
+        TaskTypeRegistry().get_task_type(
+            'test.task.type.raising.on.all.done')().execute(
+                self.env, parent.sudo())
+        self.assertEqual(parent.state, 'waiting')
+
+        child = parent.child_ids
+        child.sudo().action_assign(self.worker)
+        child.sudo().action_start()
+        child.sudo().action_done({'ok': True})
+        return parent
+
+    def test_parent_fails_when_on_all_children_done_raises(self):
+        """A genuine error in the round-boundary hook must FAIL the parent,
+        not silently complete it as 'done' (which would drop the remaining
+        work)."""
+        parent = self._raising_parent_ready_to_finalize('error')
+        with self.assertLogs(_HOOK_LOGGER, level='ERROR'):
+            parent.sudo()._check_waiting_parent()
+        self.assertEqual(parent.state, 'failed')
+        self.assertIn('on_all_children_done failed', parent.task_error or '')
+
+    def test_transient_error_in_on_all_children_done_keeps_waiting(self):
+        """A transient DB error in the hook must NOT fail the parent: it is
+        re-raised (for the poll loop to roll back and retry) and the parent
+        stays 'waiting'."""
+        import psycopg2.errors
+        parent = self._raising_parent_ready_to_finalize('transient')
+        with self.assertRaises(psycopg2.errors.SerializationFailure):
+            parent.sudo()._check_waiting_parent()
+        parent.invalidate_recordset(['state'])
+        self.assertEqual(parent.state, 'waiting')
+
+    def test_retry_task_in_on_all_children_done_keeps_waiting(self):
+        """An explicit RetryTask from the hook must NOT fail the parent: it
+        stays 'waiting' to be re-evaluated on a later poll cycle."""
+        parent = self._raising_parent_ready_to_finalize('retry')
+        # No exception, no failure — just left waiting.
+        parent.sudo()._check_waiting_parent()
+        parent.invalidate_recordset(['state'])
+        self.assertEqual(parent.state, 'waiting')
+
     def test_parent_fails_when_child_fails_permanently(self):
         """If a child fails and can't retry, parent should fail."""
         parent, children = self._make_waiting_parent_with_children(2)

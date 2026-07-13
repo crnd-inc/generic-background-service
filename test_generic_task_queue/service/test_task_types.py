@@ -265,3 +265,35 @@ class TestTaskTypeReArm(AbstractTaskType):
                 type_code='test.task.type.noop', params_list=[{'wave': 2}])
             return None
         return {'finished': True}
+
+
+class TestTaskTypeRaisingOnAllDone(AbstractTaskType):
+    """Waiting-parent whose on_all_children_done raises.
+
+    ``params['raise_kind']`` selects what it raises so tests can exercise all
+    three branches of the round-boundary error handling:
+
+    - ``'error'`` (default) — a genuine bug → parent must FAIL (not silently
+      complete as 'done', which would drop the remaining work).
+    - ``'transient'`` — a transient DB error → parent must stay 'waiting'
+      (re-raised for the poll loop to roll back and retry next cycle).
+    - ``'retry'`` — an explicit RetryTask → parent must stay 'waiting'
+      (retried on a later poll cycle).
+    """
+    _name = 'test.task.type.raising.on.all.done'
+    _singleton = False
+
+    def execute(self, env, task):
+        task.spawn_children(
+            type_code='test.task.type.noop', params_list=[{'i': 0}])
+        task.action_wait_children()
+
+    def on_all_children_done(self, env, parent_task):
+        kind = parent_task.task_params.get('raise_kind', 'error')
+        if kind == 'transient':
+            import psycopg2.errors
+            raise psycopg2.errors.SerializationFailure("simulated transient")
+        if kind == 'retry':
+            from odoo.addons.generic_task_queue.exceptions import RetryTask
+            raise RetryTask()
+        raise RuntimeError("planning the next wave blew up")

@@ -13,15 +13,8 @@ from odoo import exceptions as odoo_exceptions
 from odoo.addons.generic_background_service import (
     AbstractBackgroundServiceWorker,
 )
-from ..exceptions import RetryTask
+from ..exceptions import RetryTask, KNOWN_TRANSIENT_ERRORS
 from .task_type_registry import TaskTypeRegistry
-
-# psycopg2 error types that are always transient and safe to retry
-KNOWN_TRANSIENT_ERRORS = (
-    psycopg2.errors.SerializationFailure,
-    psycopg2.errors.DeadlockDetected,
-    psycopg2.errors.LockNotAvailable,
-)
 
 _logger = logging.getLogger(__name__)
 
