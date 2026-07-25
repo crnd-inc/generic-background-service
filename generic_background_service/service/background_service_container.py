@@ -1,3 +1,4 @@
+import configparser
 import logging
 import resource
 import threading
@@ -11,6 +12,30 @@ DEFAULT_LIMIT_TIME_CPU_BACKGROUND = 3600
 _logger = logging.getLogger(__name__)
 
 
+def _read_background_service_config():
+    """Return the raw ``[generic_background_service]`` section from odoo.cfg
+    as a plain ``{option: str}`` dict.
+
+    Odoo 19 dropped support for non-``[options]`` config sections
+    (``config.misc`` / ``config.get_misc`` were removed), so read the section
+    directly from the active config file.
+    """
+    from odoo.tools import config as odoo_config
+
+    rcfile = odoo_config.get('config')
+    if not rcfile:
+        return {}
+
+    parser = configparser.RawConfigParser()
+    try:
+        parser.read([rcfile])
+    except (configparser.Error, OSError):
+        return {}
+    if parser.has_section('generic_background_service'):
+        return dict(parser.items('generic_background_service'))
+    return {}
+
+
 def _get_background_service_config():
     """Read config for background workers from [generic_background_service]
     in odoo.cfg.
@@ -21,8 +46,7 @@ def _get_background_service_config():
         # CPU time budget per worker process (seconds). Default: 3600.
         limit_time_cpu = 3600
     """
-    from odoo.tools import config as odoo_config
-    raw = odoo_config.misc.get('generic_background_service', {})
+    raw = _read_background_service_config()
 
     def _int(key, default):
         try:

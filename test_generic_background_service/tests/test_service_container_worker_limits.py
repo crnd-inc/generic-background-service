@@ -57,41 +57,65 @@ def _make_worker(limit_time_cpu=None):
 class TestGetBackgroundServiceConfig(TransactionCase):
     """Tests for the _get_background_service_config() helper."""
 
-    def _patch_misc(self, value):
-        from odoo.tools import config as odoo_config
-        return mock.patch.object(odoo_config, 'misc', new=value)
+    def _patch_raw(self, value):
+        # Odoo 19 removed config.misc; the section is read from the config
+        # file via _read_background_service_config(), so patch that helper.
+        return mock.patch(
+            'odoo.addons.generic_background_service.service'
+            '.background_service_container._read_background_service_config',
+            return_value=value,
+        )
 
     def test_returns_default_when_no_section(self):
-        with self._patch_misc({}):
+        with self._patch_raw({}):
             cfg = _get_background_service_config()
         self.assertEqual(
             cfg['limit_time_cpu'], DEFAULT_LIMIT_TIME_CPU_BACKGROUND)
 
     def test_reads_custom_limit_time_cpu(self):
-        with self._patch_misc(
-            {'generic_background_service': {'limit_time_cpu': '7200'}}
-        ):
+        with self._patch_raw({'limit_time_cpu': '7200'}):
             cfg = _get_background_service_config()
         self.assertEqual(cfg['limit_time_cpu'], 7200)
 
     def test_invalid_value_falls_back_to_default(self):
-        with self._patch_misc(
-            {'generic_background_service': {'limit_time_cpu': 'not_a_number'}}
-        ):
+        with self._patch_raw({'limit_time_cpu': 'not_a_number'}):
             cfg = _get_background_service_config()
         self.assertEqual(
             cfg['limit_time_cpu'], DEFAULT_LIMIT_TIME_CPU_BACKGROUND)
 
     def test_invalid_value_does_not_raise(self):
-        with self._patch_misc(
-            {'generic_background_service': {'limit_time_cpu': None}}
-        ):
+        with self._patch_raw({'limit_time_cpu': None}):
             try:
                 _get_background_service_config()
             except Exception as exc:
                 self.fail(
                     "_get_background_service_config() raised"
                     " unexpectedly: %s" % exc)
+
+    def test_reads_section_from_config_file(self):
+        """End-to-end: the [generic_background_service] section is read from
+        the active odoo.cfg file (Odoo 19 no longer parses custom sections)."""
+        import os
+        import tempfile
+        import textwrap
+
+        from odoo.tools import config as odoo_config
+
+        fd, path = tempfile.mkstemp(suffix='.conf')
+        try:
+            with os.fdopen(fd, 'w') as fh:
+                fh.write(textwrap.dedent(
+                    """
+                    [options]
+                    db_name = test
+                    [generic_background_service]
+                    limit_time_cpu = 7200
+                    """))
+            with mock.patch.object(odoo_config, 'get', return_value=path):
+                cfg = _get_background_service_config()
+            self.assertEqual(cfg['limit_time_cpu'], 7200)
+        finally:
+            os.unlink(path)
 
 
 class TestServiceContainerWorkerCPULimit(TransactionCase):
