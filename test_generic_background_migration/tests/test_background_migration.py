@@ -474,7 +474,7 @@ class TestForceRescheduleAccess(TransactionCase):
         manager = self.env['res.users'].create({
             'name': 'TQ Manager',
             'login': 'tq_manager_acl',
-            'groups_id': [(6, 0, [
+            'group_ids': [(6, 0, [
                 self.env.ref('base.group_user').id,
                 self.env.ref(
                     'generic_task_queue.group_task_queue_manager').id,

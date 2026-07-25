@@ -720,7 +720,7 @@ class TestRunTaskTypeHook(TransactionCase):
         self.creator = self.env['res.users'].create({
             'name': 'Hook Creator',
             'login': 'hook_creator',
-            'groups_id': [(6, 0, [self.env.ref('base.group_user').id])],
+            'group_ids': [(6, 0, [self.env.ref('base.group_user').id])],
         })
 
     def _task(self, **kw):

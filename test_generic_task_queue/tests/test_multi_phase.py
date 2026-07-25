@@ -139,7 +139,7 @@ class TestMultiPhaseLifecycle(_MultiPhaseBase):
         creator = self.env['res.users'].create({
             'name': 'Pipeline Op',
             'login': 'pipeline_op_phase',
-            'groups_id': [(6, 0, [self.env.ref('base.group_user').id])],
+            'group_ids': [(6, 0, [self.env.ref('base.group_user').id])],
         })
         self.assertNotEqual(creator, self.env.ref('base.user_root'))
 
@@ -195,7 +195,7 @@ class TestExecutionIdentity(_MultiPhaseBase):
         self.creator = self.env['res.users'].create({
             'name': 'Pipeline Op',
             'login': 'pipeline_op_identity',
-            'groups_id': [(6, 0, [self.env.ref('base.group_user').id])],
+            'group_ids': [(6, 0, [self.env.ref('base.group_user').id])],
         })
 
     def _bind(self, task):

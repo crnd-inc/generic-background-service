@@ -59,10 +59,10 @@ class GenericTaskQueueTaskType(models.Model):
         help="Default channel used when enqueueing tasks of this type "
              "without an explicit channel argument.")
 
-    _sql_constraints = [
-        ('code_uniq', 'UNIQUE (code)',
-         'Task type code must be unique.'),
-    ]
+    _code_uniq = models.Constraint(
+        'UNIQUE (code)',
+        "Task type code must be unique.",
+    )
 
     def _register_hook(self):
         """ Sync Python-discovered task types to DB, but only when

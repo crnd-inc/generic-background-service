@@ -15,4 +15,5 @@ from . import (  # noqa: F401
     test_routing,
     test_multi_phase,
     test_task_spec,
+    test_task_queue_config,
 )

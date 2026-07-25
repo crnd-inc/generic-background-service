@@ -20,7 +20,7 @@ class TestTaskExecutionContext(TransactionCase):
         self.test_user = self.env['res.users'].create({
             'name': 'Task Test User',
             'login': 'task_test_user',
-            'groups_id': [(6, 0, [
+            'group_ids': [(6, 0, [
                 self.env.ref('base.group_user').id,
             ])],
         })
@@ -126,7 +126,7 @@ class TestProtectedTaskFields(TransactionCase):
         self.test_user = self.env['res.users'].create({
             'name': 'Task Write User',
             'login': 'task_write_user',
-            'groups_id': [(6, 0, [
+            'group_ids': [(6, 0, [
                 self.env.ref('base.group_user').id,
             ])],
         })

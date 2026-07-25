@@ -1,17 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
+    <!-- Odoo 19 replaced res.groups.category_id with res.groups.privilege -->
+    <record id="privilege_task_queue" model="res.groups.privilege">
+        <field name="name">Task Queue</field>
+        <field name="category_id" ref="base.module_category_technical"/>
+    </record>
+
     <!-- Task Queue User: can see and manage own tasks, access My Tasks menu -->
     <record id="group_task_queue_user" model="res.groups">
         <field name="name">Task Queue User</field>
-        <field name="category_id" ref="base.module_category_technical"/>
+        <field name="privilege_id" ref="privilege_task_queue"/>
         <field name="implied_ids" eval="[(4, ref('base.group_user'))]"/>
     </record>
 
     <!-- Task Queue Manager: full access to all tasks, workers and configuration -->
     <record id="group_task_queue_manager" model="res.groups">
         <field name="name">Task Queue Manager</field>
-        <field name="category_id" ref="base.module_category_technical"/>
+        <field name="privilege_id" ref="privilege_task_queue"/>
         <field name="implied_ids" eval="[(4, ref('group_task_queue_user'))]"/>
     </record>
 

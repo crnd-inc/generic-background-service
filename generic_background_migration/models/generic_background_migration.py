@@ -48,11 +48,10 @@ class GenericBackgroundMigration(models.Model):
         help="When the migration last reached a terminal state "
              "(done or failed).")
 
-    _sql_constraints = [
-        ('module_version_name_uniq',
-         'UNIQUE (module, module_version, migration_name)',
-         'Migration must be unique per module/version/name.'),
-    ]
+    _module_version_name_uniq = models.Constraint(
+        'UNIQUE (module, module_version, migration_name)',
+        "Migration must be unique per module/version/name.",
+    )
 
     def _register_hook(self):
         """Schedule background migrations for every module updated in this run.

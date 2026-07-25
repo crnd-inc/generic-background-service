@@ -39,9 +39,10 @@ class GenericTaskQueueWorker(models.Model):
     date_registered = fields.Datetime(
         default=fields.Datetime.now, readonly=True)
 
-    _sql_constraints = [
-        ('uuid_uniq', 'UNIQUE (uuid)', 'Worker UUID must be unique.'),
-    ]
+    _uuid_uniq = models.Constraint(
+        'UNIQUE (uuid)',
+        "Worker UUID must be unique.",
+    )
 
     @api.depends('service_name', 'hostname')
     def _compute_name(self):

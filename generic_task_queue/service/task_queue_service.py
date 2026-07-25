@@ -1,3 +1,4 @@
+import configparser
 import logging
 
 from odoo.addons.generic_background_service import BackgroundService
@@ -20,9 +21,25 @@ def _get_task_queue_config():
 
     Keys follow the pattern ``{service_name}_max_parallel_jobs``
     with dots in the service name replaced by underscores.
+
+    Odoo 19 dropped support for non-``[options]`` config sections
+    (``config.misc`` / ``config.get_misc`` were removed), so read the section
+    directly from the active config file.
     """
     from odoo.tools import config as odoo_config
-    return odoo_config.misc.get('generic_task_queue', {})
+
+    rcfile = odoo_config.get('config')
+    if not rcfile:
+        return {}
+
+    parser = configparser.RawConfigParser()
+    try:
+        parser.read([rcfile])
+    except (configparser.Error, OSError):
+        return {}
+    if parser.has_section('generic_task_queue'):
+        return dict(parser.items('generic_task_queue'))
+    return {}
 
 
 class TaskQueueService(BackgroundService):
