@@ -267,6 +267,42 @@ class TestTaskTypeReArm(AbstractTaskType):
         return {'finished': True}
 
 
+class TestTaskTypeExtBase(AbstractTaskType):
+    """Base definition used to verify extension MRO ordering.
+
+    The class below re-declares the same _name to *extend* it. Because the
+    extension is registered after this base (Odoo-style: later modules load
+    last), the merged class must resolve the extension's members first, while
+    members only the base defines stay reachable.
+    """
+    _name = 'test.task.type.extended'
+    _singleton = False
+    _marker = 'base'
+
+    def execute(self, env, task):
+        return {'origin': 'base'}
+
+    def base_only(self):
+        return 'base-only'
+
+
+class TestTaskTypeExtOverride(AbstractTaskType):
+    """Extension of ``test.task.type.extended``, defined *after* the base.
+
+    Overrides ``execute()`` and ``_marker`` but deliberately does NOT define
+    ``base_only()`` — so the merged class must inherit it from the base. The
+    ``super().execute()`` call proves the merged MRO chains cooperatively into
+    the base definition rather than shadowing it.
+    """
+    _name = 'test.task.type.extended'
+    _singleton = False
+    _marker = 'override'
+
+    def execute(self, env, task):
+        base = super().execute(env, task)
+        return {**base, 'origin': 'override'}
+
+
 class TestTaskTypeRaisingOnAllDone(AbstractTaskType):
     """Waiting-parent whose on_all_children_done raises.
 

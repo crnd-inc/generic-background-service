@@ -81,6 +81,121 @@ class TestTaskTypeRegistration(TransactionCase):
         self.assertNotIn(None, types)
 
 
+class TestTaskTypeExtension(TransactionCase):
+    """Test MRO-based merging of multiple definitions sharing one _name.
+
+    Two classes in test_generic_task_queue/service/test_task_types.py declare
+    _name = 'test.task.type.extended': a base and an extension defined after
+    it. The registry merges them into type(name, (Extension, Base), {}); in
+    Python's MRO the first base wins, so the later-registered *extension* must
+    take precedence — the behaviour the register_type() fix guarantees.
+    """
+
+    def _extended(self):
+        return TaskTypeRegistry().get_task_type('test.task.type.extended')
+
+    def test_extension_wins_over_base(self):
+        """A class attribute overridden by the extension wins."""
+        self.assertEqual(self._extended()()._marker, 'override')
+
+    def test_extension_mro_order(self):
+        """The extension appears before the base in the merged MRO."""
+        names = [c.__name__ for c in self._extended().__mro__]
+        self.assertIn('TestTaskTypeExtOverride', names)
+        self.assertIn('TestTaskTypeExtBase', names)
+        self.assertLess(
+            names.index('TestTaskTypeExtOverride'),
+            names.index('TestTaskTypeExtBase'),
+            'extension must precede the base in the MRO')
+
+    def test_extension_super_chains_to_base(self):
+        """super() in the extension cooperatively reaches the base def.
+
+        The extension's execute() calls super().execute(); the merged result
+        therefore carries both definitions' contributions ('origin' set by the
+        extension, plus the base having run first).
+        """
+        inst = self._extended()()
+        empty_task = self.env['generic.task.queue.task']
+        self.assertEqual(
+            inst.execute(self.env, empty_task), {'origin': 'override'})
+
+    def test_base_only_member_still_inherited(self):
+        """Members only the base defines remain reachable on the merged class.
+
+        Guards against a merge that would drop the base entirely rather than
+        layering the extension on top of it.
+        """
+        self.assertEqual(self._extended()().base_only(), 'base-only')
+
+
+class TestRegisterTypeOrdering(TransactionCase):
+    """Directly exercise register_type()'s newest-first ordering contract.
+
+    These are self-contained (no reliance on import order) and clean up the
+    scratch registrations they create.
+    """
+
+    def _make_type(self, marker):
+        return type('ScratchType', (AbstractTaskType,), {
+            '_name': None,  # prevent __init_subclass__ auto-registration
+            '_marker': marker,
+            'execute': lambda self, env, task: marker,
+        })
+
+    def _cleanup(self, name):
+        TaskTypeRegistry._registered_types.pop(name, None)
+        TaskTypeRegistry._initialized_types.pop(name, None)
+
+    def test_newest_registration_is_first(self):
+        """Each new definition is inserted at the front of the list."""
+        name = 'scratch.mro.order'
+        base = self._make_type('base')
+        ext = self._make_type('ext')
+        try:
+            TaskTypeRegistry.register_type(name, base)
+            TaskTypeRegistry.register_type(name, ext)
+            self.assertEqual(
+                TaskTypeRegistry._registered_types[name], [ext, base])
+            merged = TaskTypeRegistry().get_task_type(name)
+            self.assertEqual(merged()._marker, 'ext')
+        finally:
+            self._cleanup(name)
+
+    def test_last_of_three_wins(self):
+        """With three stacked definitions the last registered wins, and all
+        remain in the merged MRO."""
+        name = 'scratch.mro.three'
+        a, b, c = (self._make_type(m) for m in ('a', 'b', 'c'))
+        try:
+            for t in (a, b, c):
+                TaskTypeRegistry.register_type(name, t)
+            merged = TaskTypeRegistry().get_task_type(name)
+            self.assertEqual(merged()._marker, 'c')
+            for t in (a, b, c):
+                self.assertIn(t, merged.__mro__)
+        finally:
+            self._cleanup(name)
+
+    def test_reregistration_invalidates_cache(self):
+        """Registering a new extension after the type was already built
+        rebuilds the merged class so the extension takes effect."""
+        name = 'scratch.mro.reinit'
+        base = self._make_type('base')
+        ext = self._make_type('ext')
+        try:
+            TaskTypeRegistry.register_type(name, base)
+            first = TaskTypeRegistry().get_task_type(name)
+            self.assertEqual(first()._marker, 'base')
+
+            TaskTypeRegistry.register_type(name, ext)
+            second = TaskTypeRegistry().get_task_type(name)
+            self.assertEqual(second()._marker, 'ext')
+            self.assertIsNot(first, second)
+        finally:
+            self._cleanup(name)
+
+
 class TestTaskTypeInstantiation(TransactionCase):
     """Test that registered task types can be instantiated."""
 

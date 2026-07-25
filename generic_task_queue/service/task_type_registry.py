@@ -36,7 +36,7 @@ class TaskTypeRegistry:
             :param type type_cls: class that defines (or extends)
                 the task type
         """
-        cls._registered_types[name].append(type_cls)
+        cls._registered_types[name].insert(0, type_cls)
         # Invalidate initialized cache so it's rebuilt on next access
         cls._initialized_types.pop(name, None)
 
