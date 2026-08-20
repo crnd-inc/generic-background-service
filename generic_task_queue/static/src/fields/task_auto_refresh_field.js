@@ -210,9 +210,9 @@ export const taskAutoRefreshField = {
         return {
             showProgress: options.show_progress !== false,
             label: options.label,
-            labelField: options.label_field || null,
-            stateField: options.state_field || null,
-            progressField: options.progress_field || null,
+            labelField: options.label_field || undefined,
+            stateField: options.state_field || undefined,
+            progressField: options.progress_field || undefined,
         };
     },
 };

@@ -258,6 +258,11 @@ Options:
 | ``label``         | Text shown above the progress block while active.     |
 |                   | Defaults to task display name. Pass ``""`` to hide.   |
 +-------------------+-------------------------------------------------------+
+| ``label_field``   | Field on the consumer record holding a                |
+|                   | translatable label string (computed                   |
+|                   | server-side). Ignored when ``label`` is set.          |
+|                   | Example: ``'task_label'``.                            |
++-------------------+-------------------------------------------------------+
 | ``state_field``   | Field on the consumer record holding the task state.  |
 |                   | Initialises the spinner correctly when the form opens |
 |                   | mid-run (cold-start fix). Example: ``'task_state'``.  |
