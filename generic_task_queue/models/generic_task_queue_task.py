@@ -947,20 +947,30 @@ class GenericTaskQueueTask(models.Model):
             written to the parent in the same cursor/commit, then the
             propagation recurses upward until a type with
             ``propagate_progress = False`` or a root task is reached.
+
+            Progress is best-effort: rows currently locked by another
+            transaction are skipped (SKIP LOCKED), never waited on. The
+            lock holder is a finalizer, canceller or waiting-parent check
+            about to write an authoritative state.
         """
         value = max(0, min(100, int(value)))
         new_cr = self.pool.cursor()
         try:
             new_cr.execute(
-                "UPDATE generic_task_queue_task "
-                "SET progress = %s WHERE id IN %s",
+                "UPDATE generic_task_queue_task SET progress = %s "
+                "WHERE id IN (SELECT id FROM generic_task_queue_task "
+                "             WHERE id IN %s FOR UPDATE SKIP LOCKED) "
+                "RETURNING id",
                 (value, tuple(self.ids)))
+            updated_ids = {r[0] for r in new_cr.fetchall()}
             # Collect partner ids via self (original env sees uncommitted
             # task rows). Then send bus notifications via new_env so they
             # queue on new_cr's postcommit and fire at the same commit as
             # the progress UPDATE — res.partner rows are always committed.
             new_env = api.Environment(new_cr, self.env.uid, {})
             for task in self:
+                if task.id not in updated_ids:
+                    continue
                 partner = task.create_uid.partner_id
                 if not partner:
                     continue
@@ -972,7 +982,10 @@ class GenericTaskQueueTask(models.Model):
             # Propagate to parent when the task type opts in.
             # Checked via the main-env ORM (sees own uncommitted writes).
             # The actual SQL runs on new_cr so it commits atomically with
-            # the progress write above.
+            # the progress write above. Not gated on updated_ids: the
+            # parent average over committed children is valid even when
+            # this task's own tick was dropped, and the propagation
+            # skips a locked parent itself.
             for task in self:
                 if task.parent_id and task.type_id.propagate_progress:
                     self._propagate_progress_upward(
@@ -1009,11 +1022,18 @@ class GenericTaskQueueTask(models.Model):
         if not child_count:
             return
 
+        # Best-effort, like update_progress: a locked parent row is being
+        # finalized (possibly by this thread's own transaction) — skip it
+        # and stop propagating this branch rather than deadlock.
         new_cr.execute("""
             UPDATE generic_task_queue_task
             SET progress = %s
-            WHERE id = %s
+            WHERE id IN (SELECT id FROM generic_task_queue_task
+                         WHERE id = %s FOR UPDATE SKIP LOCKED)
+            RETURNING id
         """, (avg_progress, parent_id))
+        if not new_cr.fetchone():
+            return
 
         # Notify the parent task's creator via bus.
         new_cr.execute("""

@@ -1,5 +1,5 @@
 from odoo.tests.common import TransactionCase
-from odoo import exceptions
+from odoo import api, exceptions, SUPERUSER_ID
 
 
 class TestTaskCreation(TransactionCase):
@@ -554,3 +554,62 @@ class TestTaskUpdateProgress(TransactionCase):
         progress = self._read_progress_direct(task.id)
         if progress is not None:
             self.assertEqual(progress, 0)
+
+    def _create_committed_task(self):
+        """A task committed via a separate cursor, so update_progress's
+        own cursor can actually see and write it (unlike the uncommitted
+        rows of the test transaction). Dropped again on cleanup.
+
+        The test transaction itself cannot touch this row (REPEATABLE
+        READ — its snapshot predates the commit), so callers must act on
+        it through fresh cursors too.
+        """
+        registry = self.env.registry
+        with registry.cursor() as cr:
+            task_id = api.Environment(
+                cr, SUPERUSER_ID, {},
+            )['generic.task.queue.task'].create({
+                'name': 'Progress lock probe',
+                'type_code': 'test.task.type.noop',
+            }).id
+
+        def _drop():
+            with registry.cursor() as cr2:
+                cr2.execute(
+                    "DELETE FROM generic_task_queue_task WHERE id = %s",
+                    (task_id,))
+
+        self.addCleanup(_drop)
+        return task_id
+
+    def _call_update_progress(self, task_id, value):
+        registry = self.env.registry
+        with registry.cursor() as cr:
+            api.Environment(
+                cr, SUPERUSER_ID, {},
+            )['generic.task.queue.task'].browse(
+                task_id).update_progress(value)
+
+    def test_update_progress_writes_committed_row(self):
+        task_id = self._create_committed_task()
+        self._call_update_progress(task_id, 55)
+        self.assertEqual(self._read_progress_direct(task_id), 55)
+
+    def test_update_progress_skips_locked_row(self):
+        """A row locked by another transaction — possibly the calling
+        thread's own (a finalizer running hooks) — must be skipped, not
+        waited on: the separate cursor waiting on the caller's own lock
+        is a deadlock Postgres cannot detect."""
+        task_id = self._create_committed_task()
+        # Hold the row lock from a dedicated cursor, as a finalizer
+        # would; closing it (cleanup, LIFO — before the row is dropped)
+        # rolls back and releases the lock.
+        lock_cr = self.env.registry.cursor()
+        self.addCleanup(lock_cr.close)
+        lock_cr.execute(
+            "SELECT id FROM generic_task_queue_task "
+            "WHERE id = %s FOR UPDATE", (task_id,))
+
+        self._call_update_progress(task_id, 55)
+
+        self.assertEqual(self._read_progress_direct(task_id), 0)
