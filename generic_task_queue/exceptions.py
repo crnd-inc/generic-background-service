@@ -50,6 +50,16 @@ class ChildTasksFailedError(Exception):
                 failed_children.mapped('name')))
 
 
+class TaskAbandonedError(Exception):
+    """Passed to on_failure() when a task is failed because its execution
+    was lost: the worker died or restarted, or the task thread exited
+    without writing a final state (e.g. after a timeout).
+
+    The task's own execute() never reported a result, so a task type's
+    on_failure() hook can tell this apart from a business-logic error.
+    """
+
+
 class AlreadyScheduledException(Exception):
     """Raised by create_task() when on_conflict='raise' and a task with
     the same unique_key is already active."""

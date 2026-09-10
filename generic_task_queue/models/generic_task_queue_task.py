@@ -27,7 +27,7 @@ TASK_STATES = [
 # Allowed state transitions: {from_state: [to_states]}
 ALLOWED_TRANSITIONS = {
     'pending':   ['assigned', 'cancelled'],
-    'assigned':  ['running', 'cancelled'],
+    'assigned':  ['running', 'failed', 'cancelled'],
     'running':   ['done', 'failed', 'waiting', 'stuck', 'cancelled'],
     'stuck':     ['done', 'failed', 'pending', 'cancelled'],
     'waiting':   ['done', 'failed', 'cancelled'],
@@ -605,6 +605,9 @@ class GenericTaskQueueTask(models.Model):
             _logger.error(
                 "on_all_children_done hook failed for task %d; failing the "
                 "parent instead of completing it.", self.id, exc_info=True)
+            # on_failure must fire on every path to 'failed', this one
+            # included — task types finalize external bookkeeping there.
+            self._run_task_type_hook('on_failure', exc)
             self.action_fail("on_all_children_done failed: %s" % exc)
             return
 

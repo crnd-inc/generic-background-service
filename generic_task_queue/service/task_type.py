@@ -152,6 +152,11 @@ class AbstractTaskType(abc.ABC):
             the hook's changes; execute() side-effects and action_done()
             still commit normally.
 
+            Delivery is at-least-once, not exactly-once: a starved worker
+            can be declared dead by a peer while its thread still
+            finishes, so this hook may fire for a task another path has
+            already finalized. Make side effects idempotent.
+
             :param env: Odoo environment
             :param task: task record (state is still 'running'; action_done
                 is called by the worker after this hook returns)
@@ -159,7 +164,18 @@ class AbstractTaskType(abc.ABC):
         """
 
     def on_failure(self, env, task, exc):
-        """ Called after failed execution.
+        """ Called when the task is about to be failed.
+
+            Fires on every path that reaches the ``failed`` state, not only
+            when ``execute()`` raises — so it is the right place to finalize
+            external bookkeeping (mark an owning record failed, release a
+            lock, alert). ``exc`` identifies which path it was:
+
+            - ``execute()`` raised — the exception it raised
+            - a child failed non-retriably while this task was ``waiting`` —
+              a :class:`~generic_task_queue.exceptions.ChildTasksFailedError`
+              carrying the failed children
+            - ``on_all_children_done()`` raised — the exception it raised
 
             Override to add custom error handling
             (e.g., log to chatter, send alert).
@@ -171,10 +187,15 @@ class AbstractTaskType(abc.ABC):
             The hook runs inside a savepoint: a DB error rolls back only
             the hook's changes; action_fail() still commits normally.
 
+            Delivery is at-least-once, not exactly-once: a starved worker
+            can be declared dead by a peer while its thread still
+            finishes, so this hook may fire more than once for the same
+            task. Make side effects idempotent.
+
             :param env: Odoo environment
-            :param task: task record (state is still 'running'; action_fail
-                is called by the worker after this hook returns)
-            :param exc: the exception that was raised
+            :param task: task record (state is not yet 'failed'; action_fail
+                is called after this hook returns)
+            :param exc: the exception describing the failure
         """
 
     def on_child_done(self, env, parent_task, child_task):
