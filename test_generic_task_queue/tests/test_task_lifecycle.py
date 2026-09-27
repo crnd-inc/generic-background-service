@@ -93,16 +93,6 @@ class TestTaskStateTransitions(TransactionCase):
         self.assertEqual(self.task.retry_count, 0)
         self.assertTrue(self.task.date_completed)
 
-    def test_assigned_to_failed(self):
-        """assigned → failed must be permitted: a task whose worker died
-        between claim and action_start() has to be failable by crash
-        recovery."""
-        self.task.action_assign(self.worker)
-        self.assertEqual(self.task.state, 'assigned')
-        self.task.action_fail('Worker died before start')
-        self.assertEqual(self.task.state, 'failed')
-        self.assertTrue(self.task.date_completed)
-
     def test_failed_to_pending_retry(self):
         """failed → pending via action_retry(). retry_count unchanged."""
         worker = self.worker

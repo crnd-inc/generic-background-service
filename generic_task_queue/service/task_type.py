@@ -152,10 +152,10 @@ class AbstractTaskType(abc.ABC):
             the hook's changes; execute() side-effects and action_done()
             still commit normally.
 
-            Delivery is at-least-once, not exactly-once: a starved worker
-            can be declared dead by a peer while its thread still
-            finishes, so this hook may fire for a task another path has
-            already finalized. Make side effects idempotent.
+            Delivery is at-least-once: a starved worker can be declared
+            dead by a peer while its thread still finishes, so this hook
+            may fire for a task another path already finalized. Make side
+            effects idempotent.
 
             :param env: Odoo environment
             :param task: task record (state is still 'running'; action_done
@@ -164,21 +164,18 @@ class AbstractTaskType(abc.ABC):
         """
 
     def on_failure(self, env, task, exc):
-        """ Called when the task is about to be failed.
+        """ Called before the task is failed, on every path to ``failed``.
+            ``exc`` says which path:
 
-            Fires on every path that reaches the ``failed`` state, not only
-            when ``execute()`` raises — so it is the right place to finalize
-            external bookkeeping (mark an owning record failed, release a
-            lock, alert). ``exc`` identifies which path it was:
+            - ``execute()`` raised: that exception
+            - a child failed non-retriably while this task was ``waiting``:
+              :class:`~generic_task_queue.exceptions.ChildTasksFailedError`
+            - ``on_all_children_done()`` raised: that exception
+            - the execution was lost (worker died, thread gone):
+              :class:`~generic_task_queue.exceptions.TaskAbandonedError`
 
-            - ``execute()`` raised — the exception it raised
-            - a child failed non-retriably while this task was ``waiting`` —
-              a :class:`~generic_task_queue.exceptions.ChildTasksFailedError`
-              carrying the failed children
-            - ``on_all_children_done()`` raised — the exception it raised
-
-            Override to add custom error handling
-            (e.g., log to chatter, send alert).
+            Finalize external bookkeeping here (mark an owning record
+            failed, release a lock, alert).
 
             Keep this hook fast. It runs inside the same transaction as
             action_fail(), holding the task row lock. Slow work should be
@@ -187,14 +184,13 @@ class AbstractTaskType(abc.ABC):
             The hook runs inside a savepoint: a DB error rolls back only
             the hook's changes; action_fail() still commits normally.
 
-            Delivery is at-least-once, not exactly-once: a starved worker
-            can be declared dead by a peer while its thread still
-            finishes, so this hook may fire more than once for the same
-            task. Make side effects idempotent.
+            Delivery is at-least-once: a starved worker can be declared
+            dead by a peer while its thread still finishes, so this hook
+            may fire more than once for the same task. Make side effects
+            idempotent.
 
             :param env: Odoo environment
-            :param task: task record (state is not yet 'failed'; action_fail
-                is called after this hook returns)
+            :param task: task record (state is not yet 'failed')
             :param exc: the exception describing the failure
         """
 

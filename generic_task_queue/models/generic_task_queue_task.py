@@ -8,7 +8,8 @@ from odoo import models, fields, api, exceptions
 from odoo.addons.generic_mixin.tools.x2m_agg_utils import read_counts_for_o2m
 
 from ..exceptions import (
-    AlreadyScheduledException, RetryTask, KNOWN_TRANSIENT_ERRORS)
+    AlreadyScheduledException, RetryTask, KNOWN_TRANSIENT_ERRORS,
+    TaskAbandonedError)
 from ..tools.task_spec import TaskSpec, normalize_retry_policy
 
 _logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ TASK_STATES = [
 # Allowed state transitions: {from_state: [to_states]}
 ALLOWED_TRANSITIONS = {
     'pending':   ['assigned', 'cancelled'],
-    'assigned':  ['running', 'failed', 'cancelled'],
+    'assigned':  ['running', 'pending', 'cancelled'],
     'running':   ['done', 'failed', 'waiting', 'stuck', 'cancelled'],
     'stuck':     ['done', 'failed', 'pending', 'cancelled'],
     'waiting':   ['done', 'failed', 'cancelled'],
@@ -473,6 +474,120 @@ class GenericTaskQueueTask(models.Model):
         })
         self._notify_state_change()
 
+    @api.private
+    def _action_requeue(self):
+        """ Transition: assigned → pending, without counting an attempt.
+
+            For a task claimed by a worker that died before action_start():
+            nothing ran, so neither retry_count nor retry_policy applies —
+            any worker may claim it again.
+        """
+        self.ensure_one()
+        self._check_transition('pending')
+        self.sudo().write({
+            'state': 'pending',
+            'worker_id': False,
+            'runner_id': False,
+        })
+        self._notify_state_change()
+
+    @api.private
+    def _acquire_finalization(self, runner_id=None,
+                              states=('running', 'stuck')):
+        """ Row-lock this task and check the caller may still finalize it.
+
+            The row is unlocked while execute() runs, so a final state
+            write locks first and re-checks ownership; deciding on a stale
+            read lets a zombie overwrite a task another finalizer handled.
+
+            SKIP LOCKED: the caller may hold business-row locks from
+            execute() while a competing finalizer holds the task row and
+            touches business rows in its hooks, so waiting would deadlock.
+            A skipped lock means someone else is finalizing.
+
+            :param runner_id: claim-time runner id to verify; None skips
+                the runner check
+            :param states: states in which finalization is still allowed
+            :return: True if the caller owns the task; False otherwise —
+                run no hooks, write nothing
+        """
+        self.ensure_one()
+        self.flush_model()
+        # An unset Char reads as False, and Postgres rejects
+        # `varchar = boolean`; no runner means "state check only".
+        runner_id = runner_id or None
+        self.env.cr.execute(
+            "SELECT id FROM generic_task_queue_task "
+            "WHERE id = %s AND state IN %s "
+            "  AND (%s IS NULL OR runner_id = %s) "
+            "FOR UPDATE SKIP LOCKED",
+            (self.id, tuple(states), runner_id, runner_id))
+        if not self.env.cr.fetchone():
+            return False
+        # Pre-lock cache may be stale — re-read under the lock.
+        self.invalidate_recordset()
+        return True
+
+    @api.private
+    def _handle_lost_execution(self, error, runner_id=None):
+        """ Apply retry policy to a task whose execution was lost: the
+            worker died or restarted, or the task thread exited without
+            writing a final state.
+
+            'assigned' (never started) → requeued, retry budget untouched.
+            Retriable with budget remaining → auto-retried, so a task that
+            reliably kills its worker cannot loop forever. Otherwise →
+            on_failure(TaskAbandonedError) + action_fail; runner_id is
+            cleared first so a late write from a zombie thread is dropped
+            by the runner guard.
+
+            :param str error: task_error text if the task is failed
+            :param runner_id: execution the caller believes was lost, or
+                None when recovering a whole worker's tasks. Verified under
+                the lock: a task re-claimed since the caller's check is
+                left to its new runner.
+        """
+        self.ensure_one()
+        # A skipped lock means the task's own thread is finalizing.
+        if not self._acquire_finalization(
+                runner_id=runner_id,
+                states=('assigned', 'running', 'stuck')):
+            _logger.info(
+                "Task %d: skipping crash recovery — already finalized, "
+                "re-claimed, or being finalized by its own thread.",
+                self.id)
+            return
+        if self.state == 'assigned':
+            self._action_requeue()
+            return
+        # Deferred: model loading must not depend on the service layer.
+        from ..service.task_queue_worker import TaskQueueWorker
+        from ..service.task_type_registry import TaskTypeRegistry
+        if (TaskQueueWorker._should_auto_retry(self.retry_policy, None)
+                and self.retry_count < self.max_retries):
+            self._action_auto_retry(eta=TaskQueueWorker._retry_eta(
+                TaskTypeRegistry(), self.type_code, self.retry_count))
+            return
+        self.sudo().write({'runner_id': False})
+        self._run_task_type_hook('on_failure', TaskAbandonedError(error))
+        self.action_fail(error)
+
+    @api.private
+    def _recover_lost_executions(self, error):
+        """ Recover each task in this recordset, isolating failures: one
+            erroring task must not abort its siblings nor roll back the
+            caller's writes. Idempotent, so callers may revisit the same
+            tasks on a later cycle.
+
+            :param str error: task_error text if a task is failed
+        """
+        for task in self:
+            try:
+                with self.env.cr.savepoint():
+                    task._handle_lost_execution(error)
+            except Exception:
+                _logger.exception("Error recovering lost task %d", task.id)
+
     def action_cancel(self):
         """ Transition: pending/assigned/running → cancelled.
 
@@ -605,8 +720,7 @@ class GenericTaskQueueTask(models.Model):
             _logger.error(
                 "on_all_children_done hook failed for task %d; failing the "
                 "parent instead of completing it.", self.id, exc_info=True)
-            # on_failure must fire on every path to 'failed', this one
-            # included — task types finalize external bookkeeping there.
+            # Every path to 'failed' runs on_failure.
             self._run_task_type_hook('on_failure', exc)
             self.action_fail("on_all_children_done failed: %s" % exc)
             return

@@ -2,7 +2,7 @@ import logging
 
 from odoo.addons.generic_background_service import BackgroundService
 
-from .task_queue_worker import TaskQueueWorker
+from .task_queue_worker import TaskQueueWorker, SHUTDOWN_TASK_WAIT
 
 _logger = logging.getLogger(__name__)
 
@@ -74,6 +74,10 @@ class TaskQueueService(BackgroundService):
     #   0 = no timeout (not recommended for production).
     _die_on_stuck_timeout = 300
     _default_task_timeout = 3600  # 1 hour safety net
+
+    # _shutdown_timeout: stop() waits this long per worker thread; must
+    #   exceed the worker's own wait for its task threads.
+    _shutdown_timeout = SHUTDOWN_TASK_WAIT + 15
 
     def _get_channels(self):
         return self._channels

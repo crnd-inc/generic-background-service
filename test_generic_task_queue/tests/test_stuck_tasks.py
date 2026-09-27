@@ -10,11 +10,13 @@ def _make_worker(env, uuid='test-worker-stuck'):
     })
 
 
-def _make_task(env, name='Stuck test task', retry_policy='retry_any'):
+def _make_task(env, name='Stuck test task', retry_policy='retry_any',
+               max_retries=0):
     return env['generic.task.queue.task'].create({
         'name': name,
         'type_code': 'test.task.type.noop',
         'retry_policy': retry_policy,
+        'max_retries': max_retries,
     })
 
 
@@ -156,8 +158,9 @@ class TestMarkDeadHandlesStuck(TransactionCase):
         super().setUp()
         self.worker = _make_worker(self.env)
 
-    def _put_task_in_stuck(self, retry_policy='retry_any'):
-        task = _make_task(self.env, retry_policy=retry_policy)
+    def _put_task_in_stuck(self, retry_policy='retry_any', max_retries=0):
+        task = _make_task(
+            self.env, retry_policy=retry_policy, max_retries=max_retries)
         task.action_assign(self.worker)
         task.action_start()
         task.action_stuck()
@@ -165,8 +168,11 @@ class TestMarkDeadHandlesStuck(TransactionCase):
         return task
 
     def test_mark_dead_retriable_stuck_goes_pending(self):
-        """mark_dead on retry_any stuck task → pending, runner_id cleared."""
-        task = self._put_task_in_stuck('retry_any')
+        """mark_dead on a retriable stuck task with budget remaining →
+        requeued, runner_id cleared, retry_count advanced (the crash
+        consumed an attempt — otherwise a task that reliably kills its
+        worker is requeued forever)."""
+        task = self._put_task_in_stuck('retry_any', max_retries=3)
 
         self.worker.mark_dead()
 
@@ -174,29 +180,40 @@ class TestMarkDeadHandlesStuck(TransactionCase):
         self.assertFalse(task.worker_id)
         self.assertFalse(task.runner_id,
                          "runner_id must be cleared to invalidate zombies")
+        self.assertEqual(task.retry_count, 1)
 
     def test_mark_dead_non_retriable_stuck_goes_failed(self):
-        """mark_dead on no_retry stuck task → failed, retry_count unchanged."""
+        """mark_dead on no_retry stuck task → failed, runner_id cleared."""
         task = self._put_task_in_stuck('no_retry')
         self.assertEqual(task.retry_count, 0)
 
         self.worker.mark_dead()
 
         self.assertEqual(task.state, 'failed')
-        self.assertEqual(
-            task.retry_count, 0,
-            "crash recovery must not increment retry_count"
-        )
+        self.assertFalse(task.runner_id,
+                         "runner_id must be cleared to invalidate zombies")
+
+    def test_mark_dead_exhausted_budget_goes_failed(self):
+        """A retriable stuck task with no budget left must be failed, not
+        requeued — retry_any + max_retries exhausted means the execute path
+        would fail it too; crash recovery must not be an infinite loop."""
+        task = self._put_task_in_stuck('retry_any', max_retries=2)
+        task.sudo().write({'retry_count': 2})
+
+        self.worker.mark_dead()
+
+        self.assertEqual(task.state, 'failed')
 
     def test_mark_dead_also_handles_running(self):
         """mark_dead must still handle running (non-stuck) tasks."""
-        task = _make_task(self.env)
+        task = _make_task(self.env, max_retries=3)
         task.action_assign(self.worker)
         task.action_start()
 
         self.worker.mark_dead()
 
         self.assertEqual(task.state, 'pending')
+        self.assertEqual(task.retry_count, 1)
 
 
 class TestAutoRetrySkipsStuck(TransactionCase):

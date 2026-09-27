@@ -21,6 +21,12 @@ _logger = logging.getLogger(__name__)
 # How often (in seconds) to check for stale peer workers
 STALE_CHECK_INTERVAL = 60
 
+# How long (in seconds) on_shutdown waits for in-flight task threads.
+# A thread that does not finish in time is a lost execution on the next
+# startup and charges the task's retry budget, so this must cover a
+# typical task.
+SHUTDOWN_TASK_WAIT = 60
+
 
 class _TaskThread:
     """ Tracks a running task thread.
@@ -128,10 +134,10 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         self._cleanup_orphaned_tasks(self._worker_record_id)
 
     def on_shutdown(self):
-        # Wait briefly for task threads to finish cleanly.
-        # Threads that complete in time will have already written their
-        # own final state (done/failed) — nothing more to do for them.
-        self._wait_for_task_threads(timeout=10)
+        # Threads that finish in time write their own final state. The
+        # wait is bounded above by the service's _shutdown_timeout and,
+        # in prefork mode, by Odoo's limit_time_real.
+        self._wait_for_task_threads(timeout=SHUTDOWN_TASK_WAIT)
 
         # Do NOT call mark_dead() here.
         #
@@ -443,21 +449,11 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         "(retry_policy=%s, retry_count=%d)",
                         task_info.task_id,
                         task.retry_policy, task.retry_count)
-                    if task.retry_policy in ('retry_any', 'retry_known'):
-                        task.write({
-                            'state': 'pending',
-                            'worker_id': False,
-                            'runner_id': False,
-                            'task_error': False,
-                            'progress': 0,
-                        })
-                    else:
-                        task.write({
-                            'state': 'failed',
-                            'task_error': (
-                                'Task thread exited without result '
-                                'after timeout'),
-                        })
+                    # The check above is unlocked: pass the runner so a
+                    # task re-claimed meanwhile is left alone.
+                    task._handle_lost_execution(
+                        'Task thread exited without result after timeout',
+                        runner_id=task_info.runner_id)
             except Exception:
                 _logger.error(
                     "Error finalizing resolved stuck thread "
@@ -549,25 +545,14 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                         "  Orphaned task %d (state=%s, "
                         "retry_policy=%s)",
                         task.id, task.state, task.retry_policy)
-                    if task.state == 'waiting':
-                        # Don't re-execute — just un-own so any worker
-                        # can re-check whether children are done.
-                        task.write({'worker_id': False})
-                    elif task.retry_policy in ('retry_any', 'retry_known'):
-                        task.write({
-                            'state': 'pending',
-                            'worker_id': False,
-                            'runner_id': False,
-                            'task_error': False,
-                            'progress': 0,
-                        })
-                    else:
-                        task.write({
-                            'state': 'failed',
-                            'task_error': (
-                                'Worker restarted during execution '
-                                '(previous run was lost)'),
-                        })
+                # Waiting parents are not re-executed — their children
+                # already ran; just un-own them so any worker can
+                # re-check whether the children are done.
+                waiting = orphans.filtered(lambda t: t.state == 'waiting')
+                waiting.write({'worker_id': False})
+                (orphans - waiting)._recover_lost_executions(
+                    'Worker restarted during execution '
+                    '(previous run was lost)')
         except Exception:
             _logger.error(
                 "Error cleaning orphaned tasks on startup "
