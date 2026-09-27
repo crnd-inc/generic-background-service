@@ -6,6 +6,6 @@
     "license": "LGPL-3",
     "summary": """True background services for Odoo""",
     'category': 'Technical Settings',
-    "depends": ["base","web"],
+    "depends": ["base", "web"],
     'images': ['static/description/banner.png'],
 }
