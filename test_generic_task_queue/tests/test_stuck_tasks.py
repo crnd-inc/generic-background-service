@@ -1,6 +1,8 @@
 from odoo.tests.common import TransactionCase
 from odoo import exceptions
 
+from .common import recover_dead_worker
+
 
 def _make_worker(env, uuid='test-worker-stuck'):
     return env['generic.task.queue.worker'].create({
@@ -120,6 +122,20 @@ class TestRunnerIdGuard(TransactionCase):
         self.task.action_fail(error='err', runner_id='runner-zzz')
         self.assertEqual(self.task.state, 'stuck')
 
+    def test_auto_retry_matching_runner_id(self):
+        self.assertTrue(
+            self.task._action_auto_retry(runner_id='runner-aaa'))
+        self.assertEqual(self.task.state, 'pending')
+        self.assertEqual(self.task.retry_count, 1)
+
+    def test_auto_retry_mismatched_runner_id_is_dropped(self):
+        """A zombie thread's auto-retry must not requeue a task that was
+        recovered or re-claimed meanwhile."""
+        self.assertFalse(
+            self.task._action_auto_retry(runner_id='runner-zzz'))
+        self.assertEqual(self.task.state, 'stuck')
+        self.assertEqual(self.task.retry_count, 0)
+
 
 class TestClaimTaskAssignsRunnerId(TransactionCase):
     """claim_task() must assign a distinct runner_id to each claimed task."""
@@ -151,8 +167,8 @@ class TestClaimTaskAssignsRunnerId(TransactionCase):
                          "Each claimed task must have a unique runner_id")
 
 
-class TestMarkDeadHandlesStuck(TransactionCase):
-    """mark_dead() must properly handle stuck tasks."""
+class TestDeadWorkerRecoveryHandlesStuck(TransactionCase):
+    """Dead-worker recovery must properly handle stuck tasks."""
 
     def setUp(self):
         super().setUp()
@@ -167,14 +183,14 @@ class TestMarkDeadHandlesStuck(TransactionCase):
         task.sudo().write({'runner_id': 'runner-old'})
         return task
 
-    def test_mark_dead_retriable_stuck_goes_pending(self):
-        """mark_dead on a retriable stuck task with budget remaining →
+    def test_dead_worker_retriable_stuck_goes_pending(self):
+        """Recovery of a retriable stuck task with budget remaining →
         requeued, runner_id cleared, retry_count advanced (the crash
         consumed an attempt — otherwise a task that reliably kills its
         worker is requeued forever)."""
         task = self._put_task_in_stuck('retry_any', max_retries=3)
 
-        self.worker.mark_dead()
+        recover_dead_worker(self.env, self.worker)
 
         self.assertEqual(task.state, 'pending')
         self.assertFalse(task.worker_id)
@@ -182,35 +198,35 @@ class TestMarkDeadHandlesStuck(TransactionCase):
                          "runner_id must be cleared to invalidate zombies")
         self.assertEqual(task.retry_count, 1)
 
-    def test_mark_dead_non_retriable_stuck_goes_failed(self):
-        """mark_dead on no_retry stuck task → failed, runner_id cleared."""
+    def test_dead_worker_non_retriable_stuck_goes_failed(self):
+        """Recovery of a no_retry stuck task → failed, runner_id cleared."""
         task = self._put_task_in_stuck('no_retry')
         self.assertEqual(task.retry_count, 0)
 
-        self.worker.mark_dead()
+        recover_dead_worker(self.env, self.worker)
 
         self.assertEqual(task.state, 'failed')
         self.assertFalse(task.runner_id,
                          "runner_id must be cleared to invalidate zombies")
 
-    def test_mark_dead_exhausted_budget_goes_failed(self):
+    def test_dead_worker_exhausted_budget_goes_failed(self):
         """A retriable stuck task with no budget left must be failed, not
         requeued — retry_any + max_retries exhausted means the execute path
         would fail it too; crash recovery must not be an infinite loop."""
         task = self._put_task_in_stuck('retry_any', max_retries=2)
         task.sudo().write({'retry_count': 2})
 
-        self.worker.mark_dead()
+        recover_dead_worker(self.env, self.worker)
 
         self.assertEqual(task.state, 'failed')
 
-    def test_mark_dead_also_handles_running(self):
-        """mark_dead must still handle running (non-stuck) tasks."""
+    def test_dead_worker_also_handles_running(self):
+        """Recovery must still handle running (non-stuck) tasks."""
         task = _make_task(self.env, max_retries=3)
         task.action_assign(self.worker)
         task.action_start()
 
-        self.worker.mark_dead()
+        recover_dead_worker(self.env, self.worker)
 
         self.assertEqual(task.state, 'pending')
         self.assertEqual(task.retry_count, 1)

@@ -613,3 +613,34 @@ class TestTaskUpdateProgress(TransactionCase):
         self._call_update_progress(task_id, 55)
 
         self.assertEqual(self._read_progress_direct(task_id), 0)
+
+    def test_finalization_skips_row_locked_by_recovery(self):
+        """A task thread whose row is locked by another transaction (a
+        finalizer or crash recovery deciding on it) must drop its own
+        final write instead of waiting and overwriting that decision."""
+        registry = self.env.registry
+        task_id = self._create_committed_task()
+        with registry.cursor() as cr:
+            cr.execute(
+                "UPDATE generic_task_queue_task "
+                "SET state = 'running', runner_id = 'r1' WHERE id = %s",
+                (task_id,))
+        lock_cr = registry.cursor()
+        self.addCleanup(lock_cr.close)
+        lock_cr.execute(
+            "SELECT id FROM generic_task_queue_task "
+            "WHERE id = %s FOR UPDATE", (task_id,))
+
+        with registry.cursor() as cr:
+            task = api.Environment(
+                cr, SUPERUSER_ID, {},
+            )['generic.task.queue.task'].browse(task_id)
+            self.assertFalse(task.action_done({'x': 1}, runner_id='r1'))
+            self.assertFalse(task.action_fail('err', runner_id='r1'))
+            self.assertFalse(task._action_auto_retry(runner_id='r1'))
+
+        with registry.cursor() as cr:
+            cr.execute(
+                "SELECT state FROM generic_task_queue_task WHERE id = %s",
+                (task_id,))
+            self.assertEqual(cr.fetchone()[0], 'running')

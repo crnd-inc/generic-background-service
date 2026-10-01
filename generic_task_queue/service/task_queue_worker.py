@@ -21,6 +21,10 @@ _logger = logging.getLogger(__name__)
 # How often (in seconds) to check for stale peer workers
 STALE_CHECK_INTERVAL = 60
 
+# Max tasks of dead workers recovered per stale check; the sweep repeats
+# every cycle, so this bounds one cycle's work rather than the total.
+RECOVERY_BATCH_SIZE = 10
+
 # How long (in seconds) on_shutdown waits for in-flight task threads.
 # A thread that does not finish in time is a lost execution on the next
 # startup and charges the task's retry budget, so this must cover a
@@ -139,7 +143,7 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         # in prefork mode, by Odoo's limit_time_real.
         self._wait_for_task_threads(timeout=SHUTDOWN_TASK_WAIT)
 
-        # Do NOT call mark_dead() here.
+        # Do NOT recover this worker's in-flight tasks here.
         #
         # Any thread still alive after the wait (running or stuck) has
         # already started executing business logic — reassigning its task
@@ -158,9 +162,9 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         #
         #   2. Stale detection (unclean death — SIGKILL, OOM):
         #      Heartbeat stops. After DEFAULT_HEARTBEAT_TIMEOUT (60s) a
-        #      peer calls check_stale_workers() → mark_dead(). By then
-        #      the process has been dead long enough for all threads to be
-        #      gone. Safe.
+        #      peer marks this worker dead and its sweep recovers the
+        #      tasks. By then the process has been dead long enough for
+        #      all threads to be gone. Safe.
         _logger.info(
             "Worker %s shut down. In-flight tasks will be reassigned "
             "on next startup or by stale detection.",
@@ -335,20 +339,11 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                 task._run_task_type_hook(
                     'on_success', result, task_type=task_type)
 
-                try:
-                    task.action_done(result, runner_id=runner_id)
-                    # Record whether parent notification is needed.
-                    # The actual call happens after this with-block
-                    # commits so on_child_done runs in a fresh
-                    # transaction with no row locks held.
+                if task.action_done(result, runner_id=runner_id):
+                    # Notified after this with-block commits, so
+                    # on_child_done runs in a fresh transaction with no
+                    # row locks held.
                     _notify_parent = bool(task.parent_id)
-                except odoo_exceptions.ValidationError:
-                    # Task was already transitioned (timed out/stuck or
-                    # cancelled) by the worker — that's OK.
-                    _logger.info(
-                        "Task %d already transitioned "
-                        "(likely timed out/stuck or cancelled)",
-                        task_id)
             # env.cr commits here — child row lock fully released
         except Exception as exc:
             try:
@@ -372,7 +367,8 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             task.retry_count + 1, task.max_retries,
                             task.type_code, type(exc).__name__,
                             " eta=%s" % eta if eta else "")
-                        task._action_auto_retry(eta=eta)
+                        task._action_auto_retry(
+                            eta=eta, runner_id=runner_id)
                         return
 
                     # Permanent failure
@@ -382,14 +378,8 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                     # not abort the transaction before action_fail); the shared
                     # runner resolves the task type and runs it as the creator.
                     task._run_task_type_hook('on_failure', exc)
-                    try:
-                        task.action_fail(
-                            traceback.format_exc(), runner_id=runner_id)
-                    except odoo_exceptions.ValidationError:
-                        _logger.info(
-                            "Task %d already transitioned "
-                            "(likely timed out/stuck or cancelled)",
-                            task_id)
+                    task.action_fail(
+                        traceback.format_exc(), runner_id=runner_id)
             except Exception:
                 _logger.error(
                     "Failed to handle task %d failure",
@@ -644,10 +634,8 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
             so permanently-exhausted tasks never consume query slots
             or acquire locks.
 
-            NOTE: 'stuck' state is intentionally excluded. Stuck tasks
-            are retried only after the worker restarts and mark_dead()
-            transitions them to 'failed'. This prevents two threads
-            executing the same stuck task simultaneously.
+            'stuck' is excluded: stuck tasks are recovered only by crash
+            recovery, so two threads never execute the same stuck task.
         """
         if not self._channels:
             return
@@ -741,7 +729,9 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         return datetime.utcnow() + timedelta(seconds=delay)
 
     def _check_stale_peers(self):
-        """ Periodically check for stale peer workers. """
+        """ Periodically mark stale peer workers dead and sweep the
+            in-flight tasks of dead workers.
+        """
         now = time.monotonic()
         if now - self._last_stale_check < STALE_CHECK_INTERVAL:
             return
@@ -752,6 +742,24 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         except Exception:
             _logger.error(
                 "Error checking stale workers", exc_info=True)
+        self._recover_dead_worker_tasks()
+
+    def _recover_dead_worker_tasks(self):
+        """ Sweep: recover in-flight tasks still attached to a dead worker,
+            in a transaction of its own so hooks never run under the
+            stale check's worker-row locks. Bounded per cycle; repeats
+            every stale check, so it converges. Normally finds nothing.
+        """
+        try:
+            with self.with_env() as env:
+                env['generic.task.queue.task'].search([
+                    ('worker_id.state', '=', 'dead'),
+                    ('state', 'in', ('assigned', 'running', 'stuck')),
+                ], limit=RECOVERY_BATCH_SIZE)._recover_lost_executions(
+                    'Worker died during execution')
+        except Exception:
+            _logger.error(
+                "Error recovering tasks of dead workers", exc_info=True)
 
     def _wait_for_task_threads(self, timeout=10):
         """ Wait for running task threads to finish. """

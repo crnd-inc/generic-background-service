@@ -66,32 +66,11 @@ class GenericTaskQueueWorker(models.Model):
 
     @api.private
     def mark_dead(self):
-        """Mark worker as dead and recover its in-flight tasks
-        (assigned/running/stuck). runner_id is cleared either way: a
-        "dead" worker may merely be starved, and its zombie threads can
-        still try to write results.
-
-        Runs while check_stale_workers() holds FOR UPDATE on the stale
-        worker rows, so a slow on_failure hook stalls peer cleanup
-        cluster-wide. Best-effort: a locked or erroring task is left to
-        recover_dead_worker_tasks().
+        """Mark worker as dead. Task recovery is the detecting worker's
+        sweep, outside this transaction (TaskQueueWorker
+        ._recover_dead_worker_tasks).
         """
         self.write({'state': 'dead'})
-        self.env['generic.task.queue.task'].search([
-            ('worker_id', 'in', self.ids),
-            ('state', 'in', ('assigned', 'running', 'stuck')),
-        ])._recover_lost_executions('Worker died during execution')
-
-    @api.private
-    def recover_dead_worker_tasks(self):
-        """Recover in-flight tasks still attached to a dead worker: those
-        mark_dead() skipped because the row was locked or recovery
-        errored. Runs on the stale-check cadence; normally finds nothing.
-        """
-        self.env['generic.task.queue.task'].search([
-            ('worker_id.state', '=', 'dead'),
-            ('state', 'in', ('assigned', 'running', 'stuck')),
-        ])._recover_lost_executions('Worker died during execution')
 
     @api.private
     def mark_stuck(self):
@@ -143,7 +122,9 @@ class GenericTaskQueueWorker(models.Model):
     @api.private
     @api.model
     def check_stale_workers(self, heartbeat_timeout=None):
-        """Find workers that missed their heartbeat and handle them.
+        """Find workers that missed their heartbeat and mark them dead.
+        Task recovery is the calling worker's sweep, outside this
+        transaction.
 
         Uses FOR UPDATE SKIP LOCKED to prevent multiple workers
         from processing the same stale peer simultaneously.
@@ -174,5 +155,4 @@ class GenericTaskQueueWorker(models.Model):
                     w.name or w.uuid or str(w.id)
                     for w in stale_workers))
             stale_workers.mark_dead()
-        self.recover_dead_worker_tasks()
         return stale_workers

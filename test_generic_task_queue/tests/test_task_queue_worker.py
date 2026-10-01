@@ -7,21 +7,10 @@ from odoo.addons.generic_task_queue.service.task_type_registry import (
     TaskTypeRegistry,
 )
 
+from .common import make_service_worker, recover_dead_worker
+
 TASK_MODEL_LOGGER = (
     'odoo.addons.generic_task_queue.models.generic_task_queue_task')
-
-
-def _make_service_worker(env):
-    """A TaskQueueWorker without its own thread or DB connection: with_env()
-    yields the test env, so its recovery paths run in the test transaction."""
-    import contextlib
-    from odoo.addons.generic_task_queue.service.task_queue_worker import (
-        TaskQueueWorker,
-    )
-    worker = TaskQueueWorker.__new__(TaskQueueWorker)
-    worker._active_tasks = []
-    worker.with_env = contextlib.contextmanager(lambda: iter([env]))
-    return worker
 
 
 def _record_on_failure(test, task_type_cls):
@@ -123,8 +112,8 @@ class TestWorkerModel(TransactionCase):
         self.assertEqual(w.state, 'active')
         self.assertTrue(w.last_heartbeat)
 
-    def test_mark_dead_reassigns_retriable(self):
-        """mark_dead() should requeue retriable tasks with budget left,
+    def test_dead_worker_reassigns_retriable(self):
+        """Dead-worker recovery should requeue retriable tasks with budget
         consuming one retry attempt."""
         Worker = self.env['generic.task.queue.worker']
         Task = self.env['generic.task.queue.task']
@@ -143,16 +132,16 @@ class TestWorkerModel(TransactionCase):
         task.action_start()
         self.assertEqual(task.state, 'running')
 
-        w.mark_dead()
+        recover_dead_worker(self.env, w)
         self.assertEqual(w.state, 'dead')
         self.assertEqual(task.state, 'pending')
         self.assertFalse(task.worker_id)
         self.assertEqual(task.retry_count, 1)
 
     @mute_logger(TASK_MODEL_LOGGER)
-    def test_mark_dead_one_bad_task_does_not_abort_recovery(self):
+    def test_one_bad_task_does_not_abort_recovery(self):
         """A task whose recovery raises must not abort recovery of its
-        sibling orphans nor roll back the worker's 'dead' mark."""
+        siblings; a later sweep picks it up."""
         Worker = self.env['generic.task.queue.worker']
         Task = self.env['generic.task.queue.task']
         w = Worker.create({
@@ -169,29 +158,28 @@ class TestWorkerModel(TransactionCase):
             task.action_assign(w)
             task.action_start()
         bad, good = tasks
+        w.mark_dead()
 
         RegistryTask = self.env.registry['generic.task.queue.task']
         orig = RegistryTask._handle_lost_execution
 
-        def _racy(rec, error):
+        def _failing(rec, error, **kwargs):
             if rec.id == bad.id:
                 raise RuntimeError('simulated recovery failure')
-            return orig(rec, error)
+            return orig(rec, error, **kwargs)
 
         with patch.object(
-                RegistryTask, '_handle_lost_execution', _racy):
-            w.mark_dead()
+                RegistryTask, '_handle_lost_execution', _failing):
+            make_service_worker(self.env)._recover_dead_worker_tasks()
 
-        self.assertEqual(w.state, 'dead')
         self.assertEqual(bad.state, 'running')      # left for the sweep
         self.assertEqual(good.state, 'failed')
 
-        # The reconciliation sweep converges on the skipped task.
-        self.env['generic.task.queue.worker'].recover_dead_worker_tasks()
+        make_service_worker(self.env)._recover_dead_worker_tasks()
         self.assertEqual(bad.state, 'failed')
 
-    def test_mark_dead_fails_non_retriable(self):
-        """mark_dead() should fail non-retriable tasks."""
+    def test_dead_worker_fails_non_retriable(self):
+        """Dead-worker recovery should fail non-retriable tasks."""
         Worker = self.env['generic.task.queue.worker']
         Task = self.env['generic.task.queue.task']
         w = Worker.create({
@@ -207,11 +195,11 @@ class TestWorkerModel(TransactionCase):
         task.action_assign(w)
         task.action_start()
 
-        w.mark_dead()
+        recover_dead_worker(self.env, w)
         self.assertEqual(task.state, 'failed')
         self.assertIn('Worker died', task.task_error)
 
-    def test_mark_dead_runs_on_failure_hook(self):
+    def test_dead_worker_runs_on_failure_hook(self):
         """Failing an orphaned task must run on_failure and go through
         action_fail(). Task types finalize external bookkeeping in on_failure
         (e.g. marking an owning migration record failed); a raw state write
@@ -237,13 +225,13 @@ class TestWorkerModel(TransactionCase):
         task.action_start()
         seen = _record_on_failure(self, TestTaskTypeNoOp)
 
-        w.mark_dead()
+        recover_dead_worker(self.env, w)
 
         self.assertEqual(task.state, 'failed')
         self.assertTrue(task.date_completed)
         self.assertEqual(seen, [TaskAbandonedError])
 
-    def test_mark_dead_requeues_task_that_never_started(self):
+    def test_dead_worker_requeues_task_that_never_started(self):
         """A task still 'assigned' when its worker died never ran: it goes
         back to pending for any worker without consuming retry budget,
         even under no_retry."""
@@ -263,7 +251,7 @@ class TestWorkerModel(TransactionCase):
         task.sudo().write({'runner_id': 'old-runner'})
         self.assertEqual(task.state, 'assigned')
 
-        w.mark_dead()
+        recover_dead_worker(self.env, w)
 
         self.assertEqual(task.state, 'pending')
         self.assertEqual(task.retry_count, 0)
@@ -271,9 +259,8 @@ class TestWorkerModel(TransactionCase):
         self.assertFalse(task.runner_id)
 
     def test_sweep_recovers_leftover_of_dead_worker(self):
-        """A task still in-flight behind an already-dead worker (skipped
-        by mark_dead's best-effort pass) must be recovered by the sweep,
-        honouring the retry budget."""
+        """In-flight tasks behind a dead worker are recovered by the
+        sweep, honouring the retry budget."""
         Worker = self.env['generic.task.queue.worker']
         Task = self.env['generic.task.queue.task']
         w = Worker.create({
@@ -295,14 +282,59 @@ class TestWorkerModel(TransactionCase):
         for task in retriable + dead_end:
             task.action_assign(w)
             task.action_start()
-        # Simulate a mark_dead pass that skipped both tasks.
-        w.write({'state': 'dead'})
+        w.mark_dead()
 
-        Worker.recover_dead_worker_tasks()
+        make_service_worker(self.env)._recover_dead_worker_tasks()
 
         self.assertEqual(retriable.state, 'pending')
         self.assertEqual(retriable.retry_count, 1)
         self.assertEqual(dead_end.state, 'failed')
+
+    def test_sweep_leaves_re_claimed_task_alone(self):
+        """A task requeued and re-claimed by a live worker after the sweep
+        found it (e.g. by a sibling's sweep) must not be recovered again:
+        the worker and runner captured at search time are verified under
+        the lock."""
+        Worker = self.env['generic.task.queue.worker']
+        Task = self.env['generic.task.queue.task']
+        dead = Worker.create({
+            'uuid': 'sweep-race-dead',
+            'service_name': 'test.svc',
+            'state': 'dead',
+        })
+        live = Worker.create({
+            'uuid': 'sweep-race-live',
+            'service_name': 'test.svc',
+            'state': 'active',
+        })
+        task = Task.create({
+            'name': 'Re-claimed meanwhile',
+            'type_code': 'test.task.type.noop',
+            'retry_policy': 'retry_any',
+            'max_retries': 3,
+        })
+        task.action_assign(dead)
+        task.action_start()
+        task.sudo().write({'runner_id': 'old-runner'})
+
+        RegistryTask = self.env.registry['generic.task.queue.task']
+        orig = RegistryTask._handle_lost_execution
+
+        def _reclaim_then_recover(rec, error, **kwargs):
+            # Another worker claimed the task between the sweep's search
+            # and this task's recovery.
+            rec.sudo().write({'worker_id': live.id, 'runner_id': 'new'})
+            return orig(rec, error, **kwargs)
+
+        with patch.object(
+                RegistryTask, '_handle_lost_execution',
+                _reclaim_then_recover):
+            make_service_worker(self.env)._recover_dead_worker_tasks()
+
+        self.assertEqual(task.state, 'running')
+        self.assertEqual(task.worker_id, live)
+        self.assertEqual(task.runner_id, 'new')
+        self.assertEqual(task.retry_count, 0)
 
     def test_sweep_ignores_tasks_of_live_workers(self):
         Worker = self.env['generic.task.queue.worker']
@@ -319,19 +351,21 @@ class TestWorkerModel(TransactionCase):
         task.action_assign(w)
         task.action_start()
 
-        Worker.recover_dead_worker_tasks()
+        make_service_worker(self.env)._recover_dead_worker_tasks()
 
         self.assertEqual(task.state, 'running')
 
-    def test_check_stale_workers_runs_sweep(self):
-        """The sweep runs on the stale-check cadence even when no worker
-        went stale on this cycle."""
+    def test_stale_peer_check_recovers_its_tasks(self):
+        """The stale-peer check marks a silent peer dead and the sweep it
+        triggers recovers that peer's in-flight tasks."""
+        from datetime import timedelta
         Worker = self.env['generic.task.queue.worker']
         Task = self.env['generic.task.queue.task']
         w = Worker.create({
-            'uuid': 'sweep-test-cadence',
+            'uuid': 'stale-peer',
             'service_name': 'test.svc',
             'state': 'active',
+            'last_heartbeat': self.env.cr.now() - timedelta(seconds=120),
         })
         task = Task.create({
             'name': 'Leftover',
@@ -340,11 +374,10 @@ class TestWorkerModel(TransactionCase):
         })
         task.action_assign(w)
         task.action_start()
-        w.write({'state': 'dead'})
 
-        stale = Worker.check_stale_workers()
+        make_service_worker(self.env)._check_stale_peers()
 
-        self.assertFalse(stale)
+        self.assertEqual(w.state, 'dead')
         self.assertEqual(task.state, 'failed')
 
     def test_check_stale_workers(self):
@@ -629,7 +662,7 @@ class TestResolvedStuckThreads(TransactionCase):
         self.assertEqual(task.state, 'stuck')
         seen = _record_on_failure(self, TestTaskTypeNoOp)
 
-        worker = _make_service_worker(self.env)
+        worker = make_service_worker(self.env)
         worker._handle_resolved_stuck_threads(
             [self._make_task_info(task.id, task.runner_id)])
 
@@ -730,7 +763,7 @@ class TestCleanupOrphanedTasks(TransactionCase):
 
     def setUp(self):
         super().setUp()
-        self.worker = _make_service_worker(self.env)
+        self.worker = make_service_worker(self.env)
         self.worker_rec = self.env['generic.task.queue.worker'].create({
             'uuid': 'cleanup-test-worker',
             'service_name': 'test.svc',

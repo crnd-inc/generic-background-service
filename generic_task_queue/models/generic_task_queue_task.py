@@ -358,23 +358,24 @@ class GenericTaskQueueTask(models.Model):
 
     @api.private
     def action_done(self, result=None, runner_id=None):
-        """ Transition: running/stuck → done.
+        """ Transition: running/stuck/waiting → done.
 
-            Called by worker (SUPERUSER context). No sudo needed.
+            Called by worker (SUPERUSER context). No sudo needed. A
+            runner-guarded call finalizes an execution, so it covers
+            running/stuck only; waiting parents are completed without one.
 
-            :param runner_id: If provided, the call is silently dropped
-                when the task's current runner_id does not match.
-                Prevents zombie threads from overwriting a task that
-                has been reassigned to a new execution attempt.
+            :param runner_id: the execution's claim-time runner id. If
+                given, the row is locked and the write is dropped unless
+                the task is still running/stuck under this runner
+                (zombie-thread guard, see _acquire_finalization).
+            :return: True if the state was written, False if dropped
         """
-        if runner_id is not None:
-            self.ensure_one()
-            self.invalidate_recordset(['runner_id'])
-            if self.runner_id != runner_id:
-                _logger.info(
-                    "Task %d: runner_id mismatch, dropping action_done "
-                    "(zombie thread guard)", self.id)
-                return
+        if runner_id is not None and not self._acquire_finalization(
+                runner_id=runner_id):
+            _logger.info(
+                "Task %d: execution no longer owns the task, dropping "
+                "action_done (zombie thread guard)", self.id)
+            return False
         self._check_transition('done')
         self.write({
             'state': 'done',
@@ -384,6 +385,7 @@ class GenericTaskQueueTask(models.Model):
         })
         self._notify_state_change()
         self._notify_completion()
+        return True
 
     @api.private
     def action_wait_children(self):
@@ -409,18 +411,19 @@ class GenericTaskQueueTask(models.Model):
 
             :param str error: error message / traceback text
             :param dict error_data: structured error data (JSON)
-            :param runner_id: If provided, the call is silently dropped
-                when the task's current runner_id does not match.
-                Prevents zombie threads from overwriting a reassigned task.
+            :param runner_id: the execution's claim-time runner id. If
+                given, the row is locked and the write is dropped unless
+                the task is still running/stuck under this runner
+                (zombie-thread guard, see _acquire_finalization).
+            :return: True if the state was written, False if dropped
         """
         self.ensure_one()
-        if runner_id is not None:
-            self.invalidate_recordset(['runner_id'])
-            if self.runner_id != runner_id:
-                _logger.info(
-                    "Task %d: runner_id mismatch, dropping action_fail "
-                    "(zombie thread guard)", self.id)
-                return
+        if runner_id is not None and not self._acquire_finalization(
+                runner_id=runner_id):
+            _logger.info(
+                "Task %d: execution no longer owns the task, dropping "
+                "action_fail (zombie thread guard)", self.id)
+            return False
         self._check_transition('failed')
         vals = {
             'state': 'failed',
@@ -432,6 +435,7 @@ class GenericTaskQueueTask(models.Model):
         self.write(vals)
         self._notify_state_change()
         self._notify_completion()
+        return True
 
     def action_retry(self, eta=None):
         """ Manual retry: transition failed → pending.
@@ -455,14 +459,25 @@ class GenericTaskQueueTask(models.Model):
         self._notify_state_change()
 
     @api.private
-    def _action_auto_retry(self, eta=None):
+    def _action_auto_retry(self, eta=None, runner_id=None):
         """ Automatic retry: transition to pending and increment retry_count.
 
             Called by the worker when a task should be automatically retried
             (transient error or explicit RetryTask). The caller is responsible
             for checking retry_count < max_retries and policy before calling.
+
+            :param runner_id: as for action_done: if given, the row is
+                locked and the requeue is dropped unless the task is still
+                running/stuck under this runner.
+            :return: True if requeued, False if dropped
         """
         self.ensure_one()
+        if runner_id is not None and not self._acquire_finalization(
+                runner_id=runner_id):
+            _logger.info(
+                "Task %d: execution no longer owns the task, dropping "
+                "auto-retry (zombie thread guard)", self.id)
+            return False
         self.sudo().write({
             'state': 'pending',
             'worker_id': False,
@@ -473,6 +488,7 @@ class GenericTaskQueueTask(models.Model):
             'retry_count': self.retry_count + 1,
         })
         self._notify_state_change()
+        return True
 
     @api.private
     def _action_requeue(self):
@@ -492,7 +508,7 @@ class GenericTaskQueueTask(models.Model):
         self._notify_state_change()
 
     @api.private
-    def _acquire_finalization(self, runner_id=None,
+    def _acquire_finalization(self, runner_id=None, worker_id=None,
                               states=('running', 'stuck')):
         """ Row-lock this task and check the caller may still finalize it.
 
@@ -507,6 +523,8 @@ class GenericTaskQueueTask(models.Model):
 
             :param runner_id: claim-time runner id to verify; None skips
                 the runner check
+            :param worker_id: id of the worker record expected to own the
+                task; None skips the worker check
             :param states: states in which finalization is still allowed
             :return: True if the caller owns the task; False otherwise —
                 run no hooks, write nothing
@@ -514,14 +532,17 @@ class GenericTaskQueueTask(models.Model):
         self.ensure_one()
         self.flush_model()
         # An unset Char reads as False, and Postgres rejects
-        # `varchar = boolean`; no runner means "state check only".
+        # `varchar = boolean`; an unset check is skipped.
         runner_id = runner_id or None
+        worker_id = worker_id or None
         self.env.cr.execute(
             "SELECT id FROM generic_task_queue_task "
             "WHERE id = %s AND state IN %s "
             "  AND (%s IS NULL OR runner_id = %s) "
+            "  AND (%s IS NULL OR worker_id = %s) "
             "FOR UPDATE SKIP LOCKED",
-            (self.id, tuple(states), runner_id, runner_id))
+            (self.id, tuple(states), runner_id, runner_id,
+             worker_id, worker_id))
         if not self.env.cr.fetchone():
             return False
         # Pre-lock cache may be stale — re-read under the lock.
@@ -529,7 +550,7 @@ class GenericTaskQueueTask(models.Model):
         return True
 
     @api.private
-    def _handle_lost_execution(self, error, runner_id=None):
+    def _handle_lost_execution(self, error, runner_id=None, worker_id=None):
         """ Apply retry policy to a task whose execution was lost: the
             worker died or restarted, or the task thread exited without
             writing a final state.
@@ -542,15 +563,18 @@ class GenericTaskQueueTask(models.Model):
             by the runner guard.
 
             :param str error: task_error text if the task is failed
-            :param runner_id: execution the caller believes was lost, or
-                None when recovering a whole worker's tasks. Verified under
-                the lock: a task re-claimed since the caller's check is
-                left to its new runner.
+            :param runner_id: runner id of the execution the caller
+                believes was lost
+            :param worker_id: id of the worker record it believes owns
+                the task
+
+            Both are verified under the lock, so a task re-claimed since
+            the caller found it is left to its new runner.
         """
         self.ensure_one()
         # A skipped lock means the task's own thread is finalizing.
         if not self._acquire_finalization(
-                runner_id=runner_id,
+                runner_id=runner_id, worker_id=worker_id,
                 states=('assigned', 'running', 'stuck')):
             _logger.info(
                 "Task %d: skipping crash recovery — already finalized, "
@@ -574,17 +598,20 @@ class GenericTaskQueueTask(models.Model):
 
     @api.private
     def _recover_lost_executions(self, error):
-        """ Recover each task in this recordset, isolating failures: one
-            erroring task must not abort its siblings nor roll back the
-            caller's writes. Idempotent, so callers may revisit the same
-            tasks on a later cycle.
+        """ Recover each task in this recordset as a lost execution,
+            verifying under the lock that it still has the worker and
+            runner it had when found. One erroring task does not abort the
+            rest (savepoint); recovery is idempotent, so callers may
+            revisit the same tasks on a later cycle.
 
             :param str error: task_error text if a task is failed
         """
         for task in self:
             try:
                 with self.env.cr.savepoint():
-                    task._handle_lost_execution(error)
+                    task._handle_lost_execution(
+                        error, runner_id=task.runner_id,
+                        worker_id=task.worker_id.id)
             except Exception:
                 _logger.exception("Error recovering lost task %d", task.id)
 
