@@ -5,28 +5,10 @@ from odoo import exceptions
 from odoo.addons.generic_task_queue.service.task_type import (
     AbstractTaskType, ChildResult)
 
+from .common import record_on_failure
+
 # Logger the hook runner uses when it swallows a hook error.
 _HOOK_LOGGER = 'odoo.addons.generic_task_queue.models.generic_task_queue_task'
-
-
-def _record_on_failure(test, task_type_cls):
-    """Capture the exception types a task type's on_failure hook receives.
-
-    Patched only for the calling test. Only the exception *type* is kept —
-    a caught exception would pin its traceback and, through it, the failed
-    transaction's env, cursor and recordsets.
-
-    :return: list filled with ``type(exc)`` as the hook fires
-    """
-    seen = []
-
-    def _on_failure(self, env, task, exc):
-        seen.append(type(exc))
-
-    patcher = patch.object(task_type_cls, 'on_failure', _on_failure)
-    patcher.start()
-    test.addCleanup(patcher.stop)
-    return seen
 
 
 class TestWaitingState(TransactionCase):
@@ -306,13 +288,11 @@ class TestParentWaitsForChildren(TransactionCase):
         self.assertIn('on_all_children_done failed', parent.task_error or '')
 
     def test_on_failure_runs_when_on_all_children_done_raises(self):
-        """Failing a parent from the round-boundary hook must run on_failure,
-        like every other path to 'failed'. Task types finalize external
-        bookkeeping there (e.g. marking an owning record failed), so a path
-        that fails a task without the hook leaves that record stranded."""
+        """Failing a parent from its round-boundary hook runs on_failure,
+        like every other path to 'failed'."""
         from ..service.test_task_types import TestTaskTypeRaisingOnAllDone
         parent = self._raising_parent_ready_to_finalize('error')
-        seen = _record_on_failure(self, TestTaskTypeRaisingOnAllDone)
+        seen = record_on_failure(self, TestTaskTypeRaisingOnAllDone)
         with self.assertLogs(_HOOK_LOGGER, level='ERROR'):
             parent.sudo()._check_waiting_parent()
         self.assertEqual(parent.state, 'failed')

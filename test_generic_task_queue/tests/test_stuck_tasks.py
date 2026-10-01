@@ -184,10 +184,8 @@ class TestDeadWorkerRecoveryHandlesStuck(TransactionCase):
         return task
 
     def test_dead_worker_retriable_stuck_goes_pending(self):
-        """Recovery of a retriable stuck task with budget remaining →
-        requeued, runner_id cleared, retry_count advanced (the crash
-        consumed an attempt — otherwise a task that reliably kills its
-        worker is requeued forever)."""
+        """Retriable stuck task with budget remaining → requeued,
+        runner_id cleared, retry_count advanced."""
         task = self._put_task_in_stuck('retry_any', max_retries=3)
 
         recover_dead_worker(self.env, self.worker)
@@ -210,9 +208,8 @@ class TestDeadWorkerRecoveryHandlesStuck(TransactionCase):
                          "runner_id must be cleared to invalidate zombies")
 
     def test_dead_worker_exhausted_budget_goes_failed(self):
-        """A retriable stuck task with no budget left must be failed, not
-        requeued — retry_any + max_retries exhausted means the execute path
-        would fail it too; crash recovery must not be an infinite loop."""
+        """Retriable stuck task with no budget left → failed, not
+        requeued."""
         task = self._put_task_in_stuck('retry_any', max_retries=2)
         task.sudo().write({'retry_count': 2})
 

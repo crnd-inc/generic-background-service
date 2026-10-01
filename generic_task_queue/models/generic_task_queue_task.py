@@ -360,21 +360,13 @@ class GenericTaskQueueTask(models.Model):
     def action_done(self, result=None, runner_id=None):
         """ Transition: running/stuck/waiting → done.
 
-            Called by worker (SUPERUSER context). No sudo needed. A
-            runner-guarded call finalizes an execution, so it covers
-            running/stuck only; waiting parents are completed without one.
+            Called by worker (SUPERUSER context). No sudo needed.
 
-            :param runner_id: the execution's claim-time runner id. If
-                given, the row is locked and the write is dropped unless
-                the task is still running/stuck under this runner
-                (zombie-thread guard, see _acquire_finalization).
+            :param runner_id: the task thread's claim-time runner id; the
+                write is dropped if that execution no longer owns the task
             :return: True if the state was written, False if dropped
         """
-        if runner_id is not None and not self._acquire_finalization(
-                runner_id=runner_id):
-            _logger.info(
-                "Task %d: execution no longer owns the task, dropping "
-                "action_done (zombie thread guard)", self.id)
+        if not self._owns_execution(runner_id, 'action_done'):
             return False
         self._check_transition('done')
         self.write({
@@ -411,18 +403,12 @@ class GenericTaskQueueTask(models.Model):
 
             :param str error: error message / traceback text
             :param dict error_data: structured error data (JSON)
-            :param runner_id: the execution's claim-time runner id. If
-                given, the row is locked and the write is dropped unless
-                the task is still running/stuck under this runner
-                (zombie-thread guard, see _acquire_finalization).
+            :param runner_id: the task thread's claim-time runner id; the
+                write is dropped if that execution no longer owns the task
             :return: True if the state was written, False if dropped
         """
         self.ensure_one()
-        if runner_id is not None and not self._acquire_finalization(
-                runner_id=runner_id):
-            _logger.info(
-                "Task %d: execution no longer owns the task, dropping "
-                "action_fail (zombie thread guard)", self.id)
+        if not self._owns_execution(runner_id, 'action_fail'):
             return False
         self._check_transition('failed')
         vals = {
@@ -466,17 +452,11 @@ class GenericTaskQueueTask(models.Model):
             (transient error or explicit RetryTask). The caller is responsible
             for checking retry_count < max_retries and policy before calling.
 
-            :param runner_id: as for action_done: if given, the row is
-                locked and the requeue is dropped unless the task is still
-                running/stuck under this runner.
+            :param runner_id: as for action_done
             :return: True if requeued, False if dropped
         """
         self.ensure_one()
-        if runner_id is not None and not self._acquire_finalization(
-                runner_id=runner_id):
-            _logger.info(
-                "Task %d: execution no longer owns the task, dropping "
-                "auto-retry (zombie thread guard)", self.id)
+        if not self._owns_execution(runner_id, 'auto-retry'):
             return False
         self.sudo().write({
             'state': 'pending',
@@ -506,6 +486,22 @@ class GenericTaskQueueTask(models.Model):
             'runner_id': False,
         })
         self._notify_state_change()
+
+    @api.private
+    def _owns_execution(self, runner_id, action):
+        """ Zombie-thread guard for a task thread's final write: with a
+            runner_id, lock the row and check that execution still owns
+            the task (see _acquire_finalization).
+
+            :return: True to proceed, False to drop the write
+        """
+        if runner_id is None or self._acquire_finalization(
+                runner_id=runner_id):
+            return True
+        _logger.info(
+            "Task %d: execution no longer owns the task, dropping %s "
+            "(zombie thread guard)", self.id, action)
+        return False
 
     @api.private
     def _acquire_finalization(self, runner_id=None, worker_id=None,
@@ -551,22 +547,19 @@ class GenericTaskQueueTask(models.Model):
 
     @api.private
     def _handle_lost_execution(self, error, runner_id=None, worker_id=None):
-        """ Apply retry policy to a task whose execution was lost: the
-            worker died or restarted, or the task thread exited without
-            writing a final state.
+        """ Apply retry policy to a task whose execution was lost (worker
+            died or restarted, task thread exited without a final state).
 
             'assigned' (never started) → requeued, retry budget untouched.
-            Retriable with budget remaining → auto-retried, so a task that
-            reliably kills its worker cannot loop forever. Otherwise →
-            on_failure(TaskAbandonedError) + action_fail; runner_id is
-            cleared first so a late write from a zombie thread is dropped
-            by the runner guard.
+            Retriable with budget remaining → auto-retried (a crash counts
+            as transient), so a task that reliably kills its worker cannot
+            loop forever. Otherwise → on_failure(TaskAbandonedError) +
+            action_fail, with runner_id cleared first so a late write from
+            a zombie thread is dropped.
 
             :param str error: task_error text if the task is failed
-            :param runner_id: runner id of the execution the caller
-                believes was lost
-            :param worker_id: id of the worker record it believes owns
-                the task
+            :param runner_id: runner of the execution believed lost
+            :param worker_id: worker record believed to own the task
 
             Both are verified under the lock, so a task re-claimed since
             the caller found it is left to its new runner.
@@ -584,11 +577,11 @@ class GenericTaskQueueTask(models.Model):
         if self.state == 'assigned':
             self._action_requeue()
             return
-        # Deferred: model loading must not depend on the service layer.
-        from ..service.task_queue_worker import TaskQueueWorker
-        from ..service.task_type_registry import TaskTypeRegistry
-        if (TaskQueueWorker._should_auto_retry(self.retry_policy, None)
+        if (self.retry_policy in ('retry_any', 'retry_known')
                 and self.retry_count < self.max_retries):
+            # Deferred: model loading must not depend on the service layer.
+            from ..service.task_queue_worker import TaskQueueWorker
+            from ..service.task_type_registry import TaskTypeRegistry
             self._action_auto_retry(eta=TaskQueueWorker._retry_eta(
                 TaskTypeRegistry(), self.type_code, self.retry_count))
             return
@@ -598,11 +591,9 @@ class GenericTaskQueueTask(models.Model):
 
     @api.private
     def _recover_lost_executions(self, error):
-        """ Recover each task in this recordset as a lost execution,
-            verifying under the lock that it still has the worker and
-            runner it had when found. One erroring task does not abort the
-            rest (savepoint); recovery is idempotent, so callers may
-            revisit the same tasks on a later cycle.
+        """ Recover each task as a lost execution, verifying under the
+            lock that it still has the worker and runner it had when
+            found. One erroring task does not abort the rest (savepoint).
 
             :param str error: task_error text if a task is failed
         """
@@ -1127,9 +1118,8 @@ class GenericTaskQueueTask(models.Model):
             # Checked via the main-env ORM (sees own uncommitted writes).
             # The actual SQL runs on new_cr so it commits atomically with
             # the progress write above. Not gated on updated_ids: the
-            # parent average over committed children is valid even when
-            # this task's own tick was dropped, and the propagation
-            # skips a locked parent itself.
+            # parent average is valid even when this task's own tick was
+            # dropped, and a locked parent is skipped below.
             for task in self:
                 if task.parent_id and task.type_id.propagate_progress:
                     self._propagate_progress_upward(

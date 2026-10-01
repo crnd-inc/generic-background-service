@@ -52,11 +52,8 @@ class ChildTasksFailedError(Exception):
 
 class TaskAbandonedError(Exception):
     """Passed to on_failure() when a task is failed because its execution
-    was lost: the worker died or restarted, or the task thread exited
-    without writing a final state (e.g. after a timeout).
-
-    The task's own execute() never reported a result, so a task type's
-    on_failure() hook can tell this apart from a business-logic error.
+    was lost (worker died or restarted, task thread exited without a
+    final state), as opposed to execute() raising.
     """
 
 

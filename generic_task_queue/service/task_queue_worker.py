@@ -25,10 +25,9 @@ STALE_CHECK_INTERVAL = 60
 # every cycle, so this bounds one cycle's work rather than the total.
 RECOVERY_BATCH_SIZE = 10
 
-# How long (in seconds) on_shutdown waits for in-flight task threads.
-# A thread that does not finish in time is a lost execution on the next
-# startup and charges the task's retry budget, so this must cover a
-# typical task.
+# How long (in seconds) on_shutdown waits for in-flight task threads. A
+# thread that does not finish in time is a lost execution on the next
+# startup and charges the task's retry budget.
 SHUTDOWN_TASK_WAIT = 60
 
 
@@ -745,10 +744,9 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
         self._recover_dead_worker_tasks()
 
     def _recover_dead_worker_tasks(self):
-        """ Sweep: recover in-flight tasks still attached to a dead worker,
-            in a transaction of its own so hooks never run under the
-            stale check's worker-row locks. Bounded per cycle; repeats
-            every stale check, so it converges. Normally finds nothing.
+        """ Recover in-flight tasks of dead workers, in a transaction of
+            its own so hooks never run under the stale check's worker-row
+            locks. Bounded per cycle and repeated every stale check.
         """
         try:
             with self.with_env() as env:

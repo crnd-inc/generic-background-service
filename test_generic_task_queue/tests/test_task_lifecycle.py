@@ -556,13 +556,10 @@ class TestTaskUpdateProgress(TransactionCase):
             self.assertEqual(progress, 0)
 
     def _create_committed_task(self):
-        """A task committed via a separate cursor, so update_progress's
-        own cursor can actually see and write it (unlike the uncommitted
-        rows of the test transaction). Dropped again on cleanup.
-
-        The test transaction itself cannot touch this row (REPEATABLE
-        READ — its snapshot predates the commit), so callers must act on
-        it through fresh cursors too.
+        """A task committed through a separate cursor, so other cursors
+        can see and lock it; dropped on cleanup. The test transaction's
+        snapshot predates the commit, so callers act on it through fresh
+        cursors too.
         """
         registry = self.env.registry
         with registry.cursor() as cr:

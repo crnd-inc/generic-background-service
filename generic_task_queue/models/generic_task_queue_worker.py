@@ -66,9 +66,8 @@ class GenericTaskQueueWorker(models.Model):
 
     @api.private
     def mark_dead(self):
-        """Mark worker as dead. Task recovery is the detecting worker's
-        sweep, outside this transaction (TaskQueueWorker
-        ._recover_dead_worker_tasks).
+        """Mark worker as dead; its tasks are recovered by the detecting
+        worker's sweep, outside this transaction.
         """
         self.write({'state': 'dead'})
 
