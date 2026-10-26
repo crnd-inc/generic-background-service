@@ -62,8 +62,9 @@ pylint:
     stage: static-test
     before_script:
         - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+        - odood venv pip -- install -U "pylint>=3.3" "pylint-odoo>=9"
     script:
-        - odood venv run -- pylint --rcfile=ci/pylint_odoo.cfg --valid_odoo_versions=$SERIES_BRANCH -d manifest-required-author $(bash ci/list-addons.sh .)
+        - odood venv run -- pylint --rcfile=ci/pylint_odoo.cfg --valid-odoo-versions=$SERIES_BRANCH -d manifest-required-author $(bash ci/list-addons.sh .)
     <<: *except_auto_commits
 
 stylelint:
