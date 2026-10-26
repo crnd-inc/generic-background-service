@@ -1,6 +1,7 @@
-image: ghcr.io/katyukha/odood/odoo/19.0:latest
+image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-simple
 
 variables:
+    GIT_DEPTH: 0
     SERIES_BRANCH: '19.0'
     ODOO_ADMIN_PASS: admin
     CI_JOB_TOKEN_GIT_HOST: 'gitlab.crnd.pro'
@@ -30,78 +31,170 @@ cache: {}
         paths:
             - "${PIP_CACHE_DIR}"
 
-# Shared setup: link addons and fetch dependencies.
-# Requires odoo_requirements.txt at repo root; remove the second line if not needed.
-.setup:
-  before_script:
-    - git config --global --add safe.directory "$(pwd)"
-    - odood --config-from-env addons link .
-    - odood --config-from-env addons add --single-branch --odoo-requirements ./odoo_requirements.txt
-
-# Shared PostgreSQL sidecar and matching ODOOD_OPT_* variables.
-.with-postgres:
-  services:
-    - name: postgres:16
-      alias: postgres
-  variables:
-    POSTGRES_USER: odoo
-    POSTGRES_PASSWORD: odoo
-    POSTGRES_DB: postgres
-    ODOOD_OPT_DB_HOST: postgres
-    ODOOD_OPT_DB_USER: odoo
-    ODOOD_OPT_DB_PASSWORD: odoo
-
-
 stages:
-    - lint
+    - static-test
     - test
     - deploy
 
 build_env:
-    stage: lint
+    stage: static-test
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
     script:
         - pwd
         - whoami
-        - odood info
+        - python3 --version
+        - odood --version
         - odood status
+        - odood venv run -- flake8 --version
+        - odood venv run -- pylint --version
         - echo "Checking branch compatability $CI_COMMIT_BRANCH" && [[ "$CI_COMMIT_BRANCH" =~ ^19.0(-.*)?$ ]]
 
-lint:
-  extends: .setup
-  stage: lint
-  <<: *pip_cache_definition
-  script:
-    - odood --config-from-env pre-commit set-up
-    - odood --config-from-env pre-commit run
-  <<: *except_auto_commits
+flake8:
+    stage: static-test
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+    script:
+        - odood venv run -- flake8 --config=ci/flake8.cfg $(bash ci/list-addons.sh .)
+    <<: *except_auto_commits
+
+pylint:
+    stage: static-test
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+    script:
+        - odood venv run -- pylint --rcfile=ci/pylint_odoo.cfg --valid_odoo_versions=$SERIES_BRANCH -d manifest-required-author $(bash ci/list-addons.sh .)
+    <<: *except_auto_commits
+
+stylelint:
+    stage: static-test
+    script:
+        - odoo-helper lint style .
+    allow_failure: true
+    <<: *except_auto_commits
+
+bandit:
+    stage: static-test
+    <<: *pip_cache_definition
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+        - odood venv pip -- install bandit
+    script:
+        - odood venv run -- bandit -r .
+    <<: *except_auto_commits
 
 check-versions:
-  extends: .setup
-  stage: lint
-  script:
-    - odood --config-from-env repo check-versions --ignore-translations
-  <<: *only_dev_branch
-  <<: *except_auto_commits
+    stage: static-test
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+        - git fetch origin $SERIES_BRANCH
+    script:
+        - odood repo check-versions .
+    <<: *only_dev_branch
+    <<: *except_auto_commits
+
+ensure-changelog:
+    stage: static-test
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+        - git fetch origin $SERIES_BRANCH
+    script:
+        - odood repo ensure-changelog . --start-ref origin/$SERIES_BRANCH --end-ref HEAD
+    allow_failure: true
+    <<: *only_dev_branch
+    <<: *except_auto_commits
+
+ensure-icons:
+    stage: static-test
+    script:
+        - |
+          res=0
+          for addon in $(bash ci/list-addons.sh .); do
+              if [ ! -f "$addon/static/description/icon.png" ]; then
+                  echo "ERROR: addon $addon has no icon!"
+                  res=1
+              fi
+          done
+          exit $res
+    allow_failure: true
+    <<: *only_dev_branch
+    <<: *except_auto_commits
+
 
 tests:
-  extends:
-    - .setup
-    - .with-postgres
-  stage: test
-  script:
-    - odood --config-from-env test -t --dir .
+    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
+    stage: test
+    timeout: 1h
+    retry:
+        max: 1
+        when:
+            - stuck_or_timeout_failure
+            - runner_system_failure
+    <<: *pip_cache_definition
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+        - sudo apt-get update && sudo apt-get install -y libmagic1 poppler-utils
+        - odood addons add --single-branch --odoo-requirements=odoo_requirements.txt
+        - odood addons link -r .
+        - odood --version
+    script:
+        - odood test -t --dir . --coverage --coverage-report --coverage-ignore-errors --coverage-skip-covered --coverage-fail-under 30
+    <<: *except_auto_commits
+    coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+\%)/'
+    artifacts:
+        name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+        when: on_failure
+        expire_in: 1 day
+        paths:
+        - /tmp/odoo_tests/
 
-migration-tests:
-  extends:
-    - .setup
-    - .with-postgres
-  stage: test
-  script:
-    # Migration tests may fail if dependencies introduce incompatible changes
-    # with an older version of this repo — treated as a soft failure.
-    - odood --config-from-env test -t --migration --dir .
-  allow_failure: true
-  <<: *only_dev_branch
+test_odood_installation_no_demo:
+    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
+    stage: test
+    variables:
+        ODOO_DB_NAME: test-db-clean
+    <<: *pip_cache_definition
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+        - sudo apt-get update && sudo apt-get install -y libmagic1 poppler-utils
+        - odood addons add --single-branch --odoo-requirements=odoo_requirements.txt
+        - odood addons link -r .
+        - odood db create $ODOO_DB_NAME
+
+    script:
+        - odood addons install --db "$ODOO_DB_NAME" --dir-r .
+    <<: *except_auto_commits
+
+migration_tests:
+    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
+    stage: test
+    timeout: 1h
+    retry:
+        max: 1
+        when:
+            - stuck_or_timeout_failure
+            - runner_system_failure
+    variables:
+        ODOO_DB_NAME: test-db
+    <<: *pip_cache_definition
+    before_script:
+        - "[ -e /etc/odood.yml ] || sudo ln -sf /opt/odoo/odood.yml /etc/odood.yml"
+        - sudo apt-get update && sudo apt-get install -y libmagic1 poppler-utils
+        - odood addons add --single-branch --odoo-requirements=odoo_requirements.txt
+        - odood addons link -r .
+        - odood --version
+    script:
+        - odood test -t --migration --dir . --coverage --coverage-report --coverage-ignore-errors --coverage-skip-covered --coverage-fail-under 10
+    coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+\%)/'
+    <<: *only_dev_branch
+    <<: *except_auto_commits
+    allow_failure: true
+    artifacts:
+        name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+        when: on_failure
+        expire_in: 1 day
+        paths:
+        - /tmp/odoo_tests/
 
 update_addons_list_and_trans:
     image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
@@ -116,3 +209,48 @@ update_addons_list_and_trans:
     <<: *only_stable_branch
     <<: *except_auto_commits
     allow_failure: true
+
+.deploy_review_definition: &deploy_review_definition
+    stage: deploy
+    before_script:
+        - ci-review-app init
+    script:
+        - ci-review-app start
+    tags:
+        - deploy
+        - odoo-review-ci4-shared
+        - review-apps
+
+
+deploy_review_dev:
+    <<: *deploy_review_definition
+    environment:
+        name: review/$CI_COMMIT_REF_NAME
+        url: http://$CI_ENVIRONMENT_SLUG-$CI_PROJECT_ID.ci4.crnd.pro
+        on_stop: stop_review_dev
+        auto_stop_in: 1 week
+    <<: *only_dev_branch
+    when: manual
+
+deploy_review_stable:
+    <<: *deploy_review_definition
+    environment:
+        name: stable/$CI_COMMIT_REF_NAME
+        url: http://$CI_ENVIRONMENT_SLUG-$CI_PROJECT_ID.ci4.crnd.pro
+    <<: *only_stable_branch
+
+stop_review_dev:
+    stage: deploy
+    environment:
+        name: review/$CI_COMMIT_REF_NAME
+        action: stop
+    variables:
+        GIT_STRATEGY: none
+    script:
+        - ci-review-app stop
+    when: manual
+    tags:
+        - deploy
+        - odoo-review-ci4-shared
+        - review-apps
+    <<: *only_dev_branch
