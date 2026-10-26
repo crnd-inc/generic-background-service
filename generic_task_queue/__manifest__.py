@@ -1,6 +1,6 @@
 {
     "name": "Generic Task Queue",
-    "version": "19.0.0.1.10",
+    "version": "20.0.0.1.11",
     "author": "Center of Research and Development",
     "website": "https://crnd.pro",
     "license": "LGPL-3",
@@ -13,8 +13,7 @@
     ],
     "data": [
         "security/groups.xml",
-        "security/ir.model.access.csv",
-        "security/ir_rule.xml",
+        "security/ir.access.csv",
         "views/generic_task_queue_task_views.xml",
         "views/res_config_settings_views.xml",
         "data/cron.xml",

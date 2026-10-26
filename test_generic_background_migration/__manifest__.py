@@ -4,7 +4,7 @@
     'author': "Center of Research and Development",
     'website': "https://crnd.pro",
     'category': 'Hidden',
-    'version': "19.0.0.1.3",
+    'version': "20.0.0.1.4",
     'depends': [
         'generic_background_migration',
     ],

@@ -1,0 +1,3 @@
+id,name,model_id,group_id/id,operation,domain
+access_generic_background_migration_system,generic.background.migration system,generic.background.migration,base.group_system,ru,
+access_generic_background_migration_manager,generic.background.migration manager,generic.background.migration,generic_task_queue.group_task_queue_manager,r,

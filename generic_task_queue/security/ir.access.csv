@@ -1,0 +1,7 @@
+id,name,model_id,group_id/id,operation,domain
+rule_task_queue_task_user_own,Task Queue: own tasks,generic.task.queue.task,base.group_user,cru,"[('create_uid', '=', user.id)]"
+rule_task_queue_task_manager_all,Task Queue: all tasks (manager),generic.task.queue.task,generic_task_queue.group_task_queue_manager,crud,
+access_generic_task_queue_task_type_user,generic_task_queue_task_type user,generic.task.queue.task.type,base.group_user,r,
+access_generic_task_queue_task_type_manager,generic_task_queue_task_type manager,generic.task.queue.task.type,generic_task_queue.group_task_queue_manager,crud,
+access_generic_task_queue_worker_manager,generic_task_queue_worker manager,generic.task.queue.worker,generic_task_queue.group_task_queue_manager,r,
+access_generic_task_queue_worker_system,generic_task_queue_worker system,generic.task.queue.worker,base.group_system,crud,

@@ -29,7 +29,7 @@ class TestGcTasks(TransactionCase):
         self._set_param('generic_task_queue.vacuum_batch_size', '1000')
 
     def _set_param(self, key, value):
-        self.env['ir.config_parameter'].sudo().set_param(key, value)
+        self.env['ir.config_parameter'].sudo().set_int(key, value)
 
     def _make_old_done_task(self, days_ago=31, **extra_vals):
         """Create a done root task with date_completed backdated."""

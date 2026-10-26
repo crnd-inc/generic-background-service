@@ -1,8 +1,8 @@
-/** @odoo-module **/
-
-import { Component, onWillUnmount, useEffect, useState } from "@odoo/owl";
+import { Component, onWillUnmount, proxy, useProps } from "@odoo/owl";
 import { registry } from "@web/core/registry";
 import { useService } from "@web/core/utils/hooks";
+import { useLayoutEffect } from "@web/owl2/utils";
+import { standardFieldProps } from "@web/views/fields/standard_field_props";
 
 const TERMINAL_STATES = new Set(["done", "failed", "cancelled"]);
 
@@ -19,22 +19,18 @@ const TERMINAL_STATES = new Set(["done", "failed", "cancelled"]);
  */
 export class TaskProgressWidget extends Component {
     static template = "generic_task_queue.TaskProgressWidget";
-    static props = {
-        record: { type: Object },
-        // Accept any extra props from either registry without validation errors.
-        "*": true,
-    };
+    props = useProps({ ...standardFieldProps });
 
     setup() {
         this.notifService = useService("gtq_task_notification");
         this._unsubscribe = null;
 
-        this.state = useState({
+        this.state = proxy({
             progress: this.props.record.data.progress || 0,
             taskState: this.props.record.data.state || null,
         });
 
-        useEffect(
+        useLayoutEffect(
             () => {
                 this._resubscribe();
             },
@@ -45,7 +41,7 @@ export class TaskProgressWidget extends Component {
         // Bus notifications update state while the task runs; this
         // effect ensures the widget reflects DB values after
         // record.load() and on initial render with stale local state.
-        useEffect(
+        useLayoutEffect(
             () => {
                 this.state.taskState =
                     this.props.record.data.state || null;

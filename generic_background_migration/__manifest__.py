@@ -1,6 +1,6 @@
 {
     "name": "Generic Background Migration",
-    "version": "19.0.0.1.3",
+    "version": "20.0.0.1.4",
     "author": "Center of Research and Development",
     "website": "https://crnd.pro",
     "license": "LGPL-3",
@@ -13,7 +13,7 @@
         "generic_task_queue",
     ],
     "data": [
-        "security/ir.model.access.csv",
+        "security/ir.access.csv",
         "views/generic_background_migration_views.xml",
     ],
 }

@@ -6,12 +6,12 @@
     'author': "Center of Research and Development",
     'website': "https://crnd.pro",
     'category': 'Hidden',
-    'version': "19.0.0.0.12",
+    'version': "20.0.0.0.13",
     'depends': [
         'generic_task_queue',
     ],
     'data': [
-        'security/ir.model.access.csv',
+        'security/ir.access.csv',
         'views/test_task_target_views.xml',
     ],
     'license': 'LGPL-3',

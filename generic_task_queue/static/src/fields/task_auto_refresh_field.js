@@ -1,7 +1,6 @@
-/** @odoo-module **/
-
-import { Component, onWillUnmount, useEffect, useState } from "@odoo/owl";
+import { Component, onWillUnmount, proxy, t, useProps } from "@odoo/owl";
 import { registry } from "@web/core/registry";
+import { useLayoutEffect } from "@web/owl2/utils";
 import { standardFieldProps } from "@web/views/fields/standard_field_props";
 import { useService } from "@web/core/utils/hooks";
 
@@ -62,14 +61,14 @@ function scheduleReload(record) {
  */
 export class TaskAutoRefreshField extends Component {
     static template = "generic_task_queue.TaskAutoRefreshField";
-    static props = {
+    props = useProps({
         ...standardFieldProps,
-        showProgress: { type: Boolean, optional: true },
-        label: { type: String, optional: true },
-        labelField: { type: String, optional: true },
-        stateField: { type: String, optional: true },
-        progressField: { type: String, optional: true },
-    };
+        showProgress: t.boolean().optional(),
+        label: t.string().optional(),
+        labelField: t.string().optional(),
+        stateField: t.string().optional(),
+        progressField: t.string().optional(),
+    });
 
     setup() {
         this.notifService = useService("gtq_task_notification");
@@ -83,12 +82,12 @@ export class TaskAutoRefreshField extends Component {
             ? (this.props.record.data[this.props.progressField] || 0)
             : 0;
 
-        this.state = useState({
+        this.state = proxy({
             progress: initialProgress,
             taskState: initialState,
         });
 
-        useEffect(
+        useLayoutEffect(
             () => {
                 this._resubscribe();
             },
@@ -99,7 +98,7 @@ export class TaskAutoRefreshField extends Component {
         // record reloads. Without this, isActive and the bar position
         // stay stale after record.load() if the corresponding bus
         // notification was not received.
-        useEffect(
+        useLayoutEffect(
             () => {
                 if (this.props.stateField) {
                     this.state.taskState =
@@ -114,7 +113,7 @@ export class TaskAutoRefreshField extends Component {
             ]
         );
 
-        useEffect(
+        useLayoutEffect(
             () => {
                 if (this.props.progressField) {
                     this.state.progress =
@@ -139,8 +138,9 @@ export class TaskAutoRefreshField extends Component {
         if (!value) {
             return null;
         }
-        // Many2one returns [id, name]; integer fields return a number.
-        return Array.isArray(value) ? value[0] : value;
+        // Many2one returns {id, display_name}; integer fields return a
+        // number.
+        return typeof value === "object" ? value.id : value;
     }
 
     _resubscribe() {
@@ -199,7 +199,7 @@ export class TaskAutoRefreshField extends Component {
             }
         }
         const value = this.props.record.data[this.props.name];
-        return Array.isArray(value) ? value[1] : null;
+        return value && typeof value === "object" ? value.display_name : null;
     }
 }
 
@@ -210,9 +210,9 @@ export const taskAutoRefreshField = {
         return {
             showProgress: options.show_progress !== false,
             label: options.label,
-            labelField: options.label_field || null,
-            stateField: options.state_field || null,
-            progressField: options.progress_field || null,
+            labelField: options.label_field || undefined,
+            stateField: options.state_field || undefined,
+            progressField: options.progress_field || undefined,
         };
     },
 };

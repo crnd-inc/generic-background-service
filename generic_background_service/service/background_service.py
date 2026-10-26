@@ -126,9 +126,10 @@ class BackgroundService(abc.ABC):
         """ Get list of databases for this odoo server.
         """
         if odoo.tools.config['db_name']:
-            return odoo.tools.config['db_name'].split(',')
+            # `db_name` is a `comma` option: already parsed into a list
+            return list(odoo.tools.config['db_name'])
         try:
-            db_names = odoo.service.db.list_dbs(True)
+            db_names = odoo.modules.db.list_dbs(force=True)
         except psycopg2.OperationalError:
             _logger.warning(
                 "Cannot obtain list of databases to probe. "

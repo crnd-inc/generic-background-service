@@ -34,10 +34,10 @@
                 </header>
                 <sheet>
                     <div class="oe_button_box" name="button_box">
-                        <button name="action_open_child_tasks" type="object" class="oe_stat_button" icon="fa-tasks" invisible="child_count == 0">
+                        <button name="action_open_child_tasks" type="object" class="oe_stat_button" icon="checklist" invisible="child_count == 0">
                             <field name="child_count" widget="statinfo" string="Sub-tasks"/>
                         </button>
-                        <button name="action_open_parent_task" type="object" class="oe_stat_button" icon="fa-level-up" invisible="not parent_id" string="Parent Task"/>
+                        <button name="action_open_parent_task" type="object" class="oe_stat_button" icon="subdirectory_arrow_left" invisible="not parent_id" string="Parent Task"/>
                     </div>
                     <group>
                         <group string="Task">

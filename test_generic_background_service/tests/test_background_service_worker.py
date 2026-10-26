@@ -2,6 +2,7 @@ import logging
 import threading
 from unittest.mock import patch
 
+from odoo.orm.environments import Transaction
 from odoo.tests.common import TransactionCase
 
 from odoo.addons.generic_background_service.service.background_service_worker import (  # noqa: E501
@@ -430,15 +431,18 @@ class TestWorkerWithEnv(BackgroundServiceTestCase):
 
 
 class TestWithEnvCheckSignaling(BackgroundServiceTestCase):
-    """with_env() must call registry.check_signaling() on every entry.
+    """with_env() must check inter-process signaling on every entry.
 
-    Without this call, background workers never detect ORM-cache
+    Without this check, background workers never detect ORM-cache
     invalidation or registry-rebuild signals from other Odoo processes,
     and serve stale ormcache data for their entire lifetime.
 
-    Note: in test mode check_signaling() is a no-op (returns self
-    immediately), so these tests verify the *call* rather than the
-    cache-clearing side-effect.
+    Since Odoo 20.0 the check is done by the ORM itself: every new
+    Environment created on a fresh cursor starts a new `Transaction`,
+    which runs `Transaction._check_signaling()` and rebinds itself to a
+    new registry if a rebuild was signalled. These tests verify that
+    `with_env()` triggers that check once per entry and keeps whatever
+    registry the environment ends up bound to.
     """
 
     def _make_minimal_worker(self):
@@ -451,44 +455,48 @@ class TestWithEnvCheckSignaling(BackgroundServiceTestCase):
         return self._create_worker(cls)
 
     def test_check_signaling_called_on_each_with_env(self):
-        """check_signaling() must be called once per with_env() entry."""
+        """Signaling must be checked once per with_env() entry."""
         worker = self._make_minimal_worker()
-        registry = worker._worker_registry
 
-        with patch.object(registry, 'check_signaling',
-                          wraps=registry.check_signaling) as mock_cs:
+        with patch.object(Transaction, '_check_signaling',
+                          autospec=True,
+                          side_effect=Transaction._check_signaling) as mock_cs:
             with worker.with_env():
                 pass
             with worker.with_env():
                 pass
 
         self.assertEqual(mock_cs.call_count, 2,
-                         "check_signaling() must be called on every "
+                         "signaling must be checked on every "
                          "with_env() entry")
 
-    def test_worker_registry_updated_when_check_signaling_returns_new(self):
-        """If check_signaling() returns a new registry object
-        (as happens on module install), _worker_registry must be updated
-        so subsequent with_env() calls use the fresh registry."""
+    def test_worker_registry_updated_when_signaling_rebinds_registry(self):
+        """If the signaling check rebinds the transaction to a new
+        registry (as happens on module install), _worker_registry must be
+        updated so subsequent with_env() calls use the fresh registry."""
         worker = self._make_minimal_worker()
         original_registry = worker._worker_registry
 
-        # Simulate check_signaling returning a *different* registry
-        # (e.g. after a module install triggered a reload).
+        # Simulate a registry reload triggered by signaling: the
+        # transaction gets bound to a *different* registry object.
         fake_new_registry = object()
 
-        with patch.object(original_registry, 'check_signaling',
-                          return_value=fake_new_registry):
-            try:
-                with worker.with_env():
-                    pass
-            except Exception:
-                # Opening a cursor on fake_new_registry will fail —
-                # we only care that _worker_registry was updated before
-                # the cursor was opened.
-                logging.getLogger(__name__).debug(
-                    "Expected cursor failure on fake registry", exc_info=True)
+        def _fake_check_signaling(transaction, cr):
+            transaction.registry = fake_new_registry
 
+        with patch.object(Transaction, '_check_signaling',
+                          autospec=True,
+                          side_effect=_fake_check_signaling):
+            with worker.with_env() as env:
+                self.assertIs(env.registry, fake_new_registry)
+                # put the real registry back before the cursor is closed:
+                # closing it rolls the transaction back through the
+                # registry it is bound to.
+                env.transaction.registry = original_registry
+                # `Environment.registry` is a cached property
+                env.__dict__.pop('registry', None)
+
+        self.assertIsNot(worker._worker_registry, original_registry)
         self.assertIs(worker._worker_registry, fake_new_registry,
                       "_worker_registry must be replaced with the "
-                      "object returned by check_signaling()")
+                      "registry the environment is bound to")

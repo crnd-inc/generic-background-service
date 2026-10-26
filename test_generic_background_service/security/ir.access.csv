@@ -1,0 +1,2 @@
+id,name,model_id,group_id/id,operation,domain
+access_test_bg_service_compute_power_all,test_bg_service_compute_power all,test.bg.service.compute.power,base.group_everyone,crud,

@@ -92,20 +92,22 @@ class GenericTaskQueueTask(models.Model):
 
     def _bus_channel(self):
         self.ensure_one()
-        return self.create_uid.partner_id
+        # Since Odoo 20.0 bus notifications are addressed to res.users:
+        # partners only relay them to their (active) users.
+        return self.create_uid
 
     def _notify_state_change(self):
         """ Send gtq_task_update notification to the task creator.
 
             Called after every state transition. Fires via cr.postcommit
             (handled internally by bus.bus._sendone).
-            Skipped if the creator has no partner (e.g. system users).
+            Skipped if the task has no creator.
         """
         for task in self:
-            partner = task.create_uid.partner_id
-            if not partner:
+            user = task._bus_channel()
+            if not user:
                 continue
-            partner._bus_send('gtq_task_update', {
+            user._bus_send('gtq_task_update', {
                 'task_id': task.id,
                 'state': task.state,
                 'progress': task.progress,
@@ -115,7 +117,7 @@ class GenericTaskQueueTask(models.Model):
         """ Send a toast notification to the task creator when a task
             reaches a terminal state, if the task type opts in.
 
-            Skipped if the creator has no partner (e.g. system users).
+            Skipped if the task has no creator.
             Whether to notify for child tasks is left to the task type —
             set notify_on_completion = True only on types where it makes
             sense.
@@ -123,8 +125,8 @@ class GenericTaskQueueTask(models.Model):
         for task in self:
             if not task.type_id.notify_on_completion:
                 continue
-            partner = task.create_uid.partner_id
-            if not partner:
+            user = task._bus_channel()
+            if not user:
                 continue
             if task.state == 'done':
                 notif_type = 'success'
@@ -132,7 +134,7 @@ class GenericTaskQueueTask(models.Model):
             else:  # failed
                 notif_type = 'danger'
                 title = self.env._('Task failed')
-            partner._bus_send('simple_notification', {
+            user._bus_send('simple_notification', {
                 'title': title,
                 'message': task.name,
                 'type': notif_type,
@@ -958,16 +960,16 @@ class GenericTaskQueueTask(models.Model):
                 "UPDATE generic_task_queue_task "
                 "SET progress = %s WHERE id IN %s",
                 (value, tuple(self.ids)))
-            # Collect partner ids via self (original env sees uncommitted
+            # Collect creator ids via self (original env sees uncommitted
             # task rows). Then send bus notifications via new_env so they
-            # queue on new_cr's postcommit and fire at the same commit as
-            # the progress UPDATE — res.partner rows are always committed.
+            # queue on new_cr's precommit and fire at the same commit as
+            # the progress UPDATE — res.users rows are always committed.
             new_env = api.Environment(new_cr, self.env.uid, {})
             for task in self:
-                partner = task.create_uid.partner_id
-                if not partner:
+                user = task._bus_channel()
+                if not user:
                     continue
-                new_env['res.partner'].browse(partner.id)._bus_send(
+                new_env['res.users'].browse(user.id)._bus_send(
                     'gtq_task_progress', {
                         'task_id': task.id,
                         'progress': value,
@@ -1020,14 +1022,13 @@ class GenericTaskQueueTask(models.Model):
 
         # Notify the parent task's creator via bus.
         new_cr.execute("""
-            SELECT u.partner_id
+            SELECT t.create_uid
             FROM generic_task_queue_task t
-            JOIN res_users u ON u.id = t.create_uid
             WHERE t.id = %s
         """, (parent_id,))
         row = new_cr.fetchone()
         if row and row[0]:
-            new_env['res.partner'].browse(row[0])._bus_send(
+            new_env['res.users'].browse(row[0])._bus_send(
                 'gtq_task_progress', {
                     'task_id': parent_id,
                     'progress': avg_progress,
@@ -1289,12 +1290,11 @@ class GenericTaskQueueTask(models.Model):
             Only root tasks (parent_id = False) are searched; children
             are removed automatically via their ondelete='cascade'.
         """
-        get_param = self.env['ir.config_parameter'].sudo().get_param
-        days = int(get_param('generic_task_queue.vacuum_days', 7))
+        get_int = self.env['ir.config_parameter'].sudo().get_int
+        days = get_int('generic_task_queue.vacuum_days', 7)
         if days <= 0:
             return
-        batch_size = int(
-            get_param('generic_task_queue.vacuum_batch_size', 1000))
+        batch_size = get_int('generic_task_queue.vacuum_batch_size', 1000)
         cutoff = fields.Datetime.now() - timedelta(days=days)
         tasks = self.sudo().search([
             ('state', 'in', ['done', 'failed', 'cancelled']),

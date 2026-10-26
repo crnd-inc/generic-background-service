@@ -2,28 +2,28 @@
 <templates xml:space="preserve">
     <t t-name="generic_task_queue.TaskAutoRefreshField">
         <!-- Label: custom text or task display name; shown only while active -->
-        <t t-if="isActive and displayLabel">
-            <span t-out="displayLabel"/>
+        <t t-if="this.isActive and this.displayLabel">
+            <span t-out="this.displayLabel"/>
         </t>
 
         <!-- Progress block: spinner + bar while task is active -->
-        <t t-if="props.showProgress and _currentTaskId() and isActive">
+        <t t-if="this.props.showProgress and this._currentTaskId() and this.isActive">
             <div class="gtq-task-progress d-flex align-items-center gap-2 mt-1">
-                <span class="fa fa-spinner fa-spin text-muted"
+                <span class="oi oi-spin text-muted" data-icon="progress_activity"
                       style="cursor: pointer;"
                       title="Click to refresh"
-                      t-on-click="onClickReload"/>
+                      t-on-click="this.onClickReload"/>
                 <div class="progress flex-grow-1" style="height: 6px;">
                     <div
                         class="progress-bar"
                         role="progressbar"
-                        t-att-style="'width: ' + state.progress + '%'"
-                        t-att-aria-valuenow="state.progress"
+                        t-att-style="'width: ' + this.state.progress + '%'"
+                        t-att-aria-valuenow="this.state.progress"
                         aria-valuemin="0"
                         aria-valuemax="100"
                     />
                 </div>
-                <small class="text-muted" t-out="state.progress + '%'"/>
+                <small class="text-muted" t-out="this.state.progress + '%'"/>
             </div>
         </t>
     </t>

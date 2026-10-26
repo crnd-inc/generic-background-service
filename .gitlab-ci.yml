@@ -1,8 +1,8 @@
-image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-simple
+image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:20.0-simple
 
 variables:
     GIT_DEPTH: 0
-    SERIES_BRANCH: '19.0'
+    SERIES_BRANCH: '20.0'
     ODOO_ADMIN_PASS: admin
     CI_JOB_TOKEN_GIT_HOST: 'gitlab.crnd.pro'
 
@@ -10,11 +10,11 @@ variables:
 
 .only-stable-branch: &only_stable_branch
     only:
-        - "19.0"
+        - "20.0"
 
 .only-dev-branch: &only_dev_branch
     only:
-        - /^19.0-.*$/
+        - /^20.0-.*$/
 
 .except-auto-commits: &except_auto_commits
     except:
@@ -48,7 +48,7 @@ build_env:
         - odood status
         - odood venv run -- flake8 --version
         - odood venv run -- pylint --version
-        - echo "Checking branch compatability $CI_COMMIT_BRANCH" && [[ "$CI_COMMIT_BRANCH" =~ ^19.0(-.*)?$ ]]
+        - echo "Checking branch compatability $CI_COMMIT_BRANCH" && [[ "$CI_COMMIT_BRANCH" =~ ^20.0(-.*)?$ ]]
 
 flake8:
     stage: static-test
@@ -122,7 +122,7 @@ ensure-icons:
 
 
 tests:
-    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
+    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:20.0-ci
     stage: test
     timeout: 1h
     retry:
@@ -149,7 +149,7 @@ tests:
         - /tmp/odoo_tests/
 
 test_odood_installation_no_demo:
-    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
+    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:20.0-ci
     stage: test
     variables:
         ODOO_DB_NAME: test-db-clean
@@ -166,7 +166,7 @@ test_odood_installation_no_demo:
     <<: *except_auto_commits
 
 migration_tests:
-    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
+    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:20.0-ci
     stage: test
     timeout: 1h
     retry:
@@ -197,7 +197,7 @@ migration_tests:
         - /tmp/odoo_tests/
 
 update_addons_list_and_trans:
-    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:19.0-ci
+    image: registry.crnd.pro/crnd-opensource/docker/odoo-ci-x:20.0-ci
     stage: deploy
     before_script:
         - odoo-helper link .

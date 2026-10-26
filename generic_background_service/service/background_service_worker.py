@@ -60,7 +60,7 @@ class AbstractBackgroundServiceWorker(threading.Thread):
         self._worker_registry = None
 
     @property
-    def worker_registry(self) -> odoo.modules.registry.Registry:
+    def worker_registry(self) -> 'odoo.modules.registry.Registry':
         """ Access registry related to this worker.
             If registry is not initialized yet, then initialize it.
         """
@@ -71,16 +71,18 @@ class AbstractBackgroundServiceWorker(threading.Thread):
 
     @contextmanager
     def with_env(self):
-        # check_signaling() detects registry rebuild or ormcache invalidation
-        # signals written by other Odoo processes (module installs, writes that
-        # bump base_cache_signaling, etc.) and returns an up-to-date registry.
-        # Without this call the worker would serve stale ormcache data for its
-        # entire lifetime.  check_signaling() may return a *new* registry
-        # object if a rebuild was triggered, so we store the result.
-        registry = self.worker_registry.check_signaling()
-        self._worker_registry = registry
-        with registry.cursor() as cr:
+        # Creating an Environment on a fresh cursor starts a new ORM
+        # transaction, which checks the inter-process signaling tables
+        # (`Transaction._check_signaling`): a registry rebuild or ormcache
+        # invalidation signalled by other Odoo processes (module installs,
+        # writes that bump cache signaling, etc.) is applied right there,
+        # and the transaction (so `env.registry`) is rebound to a *new*
+        # registry object if a rebuild was triggered. Without this, the
+        # worker would serve stale ormcache data for its entire lifetime,
+        # so we keep the registry the environment ends up bound to.
+        with self.worker_registry.cursor() as cr:
             env = odoo.api.Environment(cr, odoo.SUPERUSER_ID, {})
+            self._worker_registry = env.registry
             yield env
 
     @property
