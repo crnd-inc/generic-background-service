@@ -1,1 +1,1 @@
---github crnd-inc/generic-addons.git -b 20.0 --module generic_mixin
+-r git@gitlab.crnd.pro:crnd-opensource/generic-addons.git -b 20.0 --module generic_mixin
