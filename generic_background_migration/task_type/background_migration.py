@@ -56,7 +56,7 @@ class BackgroundMigrationTaskType(AbstractTaskType):
                 "Background migration %s/%s/%s: module path not found "
                 "(module may have been uninstalled).",
                 module, version, name)
-            return
+            return None
 
         migration_file = os.path.join(
             module_path, 'migrations', version,
@@ -67,7 +67,7 @@ class BackgroundMigrationTaskType(AbstractTaskType):
                 "Background migration file %r not found "
                 "(module may have been uninstalled).",
                 migration_file)
-            return
+            return None
 
         migrate_fn = self._load_migrate_fn(
             migration_file, module, version, name)
@@ -83,10 +83,10 @@ class BackgroundMigrationTaskType(AbstractTaskType):
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
 
-        fn = getattr(mod, 'migrate', None)
-        if fn is None:
+        if not callable(getattr(mod, 'migrate', None)):
             raise AttributeError(
                 "Migration file %r has no 'migrate' function." % filepath)
+        fn = mod.migrate
 
         # Support both migrate(env) and migrate(env, task)
         if len(inspect.signature(fn).parameters) == 1:

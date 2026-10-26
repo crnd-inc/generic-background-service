@@ -687,7 +687,7 @@ class TestPropagateProgress(TransactionCase):
     def test_propagate_not_called_when_flag_false(self):
         """update_progress should NOT call _propagate_progress_upward
         for non-propagating task types."""
-        parent, child = self._make_parent_and_child('test.task.type.noop')
+        _parent, child = self._make_parent_and_child('test.task.type.noop')
 
         with patch.object(
             child.__class__, '_propagate_progress_upward'

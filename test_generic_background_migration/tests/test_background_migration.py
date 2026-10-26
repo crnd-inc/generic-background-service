@@ -425,9 +425,6 @@ class TestMigrationChannel(TransactionCase):
     worker handles them with no service override."""
 
     def test_migration_task_type_uses_default_channel(self):
-        from odoo.addons.generic_task_queue.service.task_type_registry import (
-            TaskTypeRegistry,
-        )
         cls = TaskTypeRegistry().get_task_type(
             'task.type.background.migration')
         self.assertEqual(cls._default_channel, 'default')

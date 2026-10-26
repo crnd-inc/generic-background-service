@@ -124,7 +124,7 @@ def wrap_service_as_worker(service_cls):
             """
             r = resource.getrusage(resource.RUSAGE_SELF)
             cpu_time = r.ru_utime + r.ru_stime
-            soft, hard = resource.getrlimit(resource.RLIMIT_CPU)
+            _soft, hard = resource.getrlimit(resource.RLIMIT_CPU)
             new_soft = int(cpu_time + self._limit_time_cpu)
             if hard != resource.RLIM_INFINITY and new_soft > hard:
                 _logger.warning(

@@ -353,7 +353,6 @@ class TaskQueueWorker(AbstractBackgroundServiceWorker):
                             and task.retry_count < task.max_retries):
                         if (isinstance(exc, RetryTask)
                                 and exc.after is not None):
-                            from datetime import datetime
                             eta = datetime.utcnow() + exc.after
                         else:
                             eta = self._retry_eta(

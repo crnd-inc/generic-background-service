@@ -486,8 +486,7 @@ class TestWithEnvCheckSignaling(BackgroundServiceTestCase):
                 # Opening a cursor on fake_new_registry will fail —
                 # we only care that _worker_registry was updated before
                 # the cursor was opened.
-                import logging as _logging
-                _logging.getLogger(__name__).debug(
+                logging.getLogger(__name__).debug(
                     "Expected cursor failure on fake registry", exc_info=True)
 
         self.assertIs(worker._worker_registry, fake_new_registry,

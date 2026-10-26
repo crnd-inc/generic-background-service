@@ -9,9 +9,9 @@ Covers:
   - unique_key is stored on the task record
   - concurrent-race path: UniqueViolation from savepoint → fallback SELECT
 """
-import psycopg2.errors
-
 from unittest.mock import patch
+
+import psycopg2.errors
 
 from odoo.tests.common import TransactionCase
 

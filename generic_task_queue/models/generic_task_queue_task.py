@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import logging
 import uuid as _uuid_module
 from datetime import timedelta
@@ -494,6 +495,7 @@ class GenericTaskQueueTask(models.Model):
 
     @api.private
     def _check_waiting_parent(self):
+        # pylint: disable=too-many-return-statements
         """ Check if this waiting parent's children are all done.
 
             Called by the worker's poll loop for tasks in 'waiting'
@@ -785,6 +787,7 @@ class GenericTaskQueueTask(models.Model):
     @api.model
     def create_children(self, parent_task, *specs, type_code=None,
                         params_list=None, **common_vals):
+        # pylint: disable=too-many-locals
         """ Create a wave of child tasks under a parent task.
 
             Two calling forms:
@@ -1155,6 +1158,7 @@ class GenericTaskQueueTask(models.Model):
                     timeout=0, parent_id=None,
                     retry_policy=None, max_retries=None,
                     unique_key=None, on_conflict='reuse-running'):
+        # pylint: disable=too-many-locals,too-many-branches
         """ Convenience method to create a task.
 
             Usage::
